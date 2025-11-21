@@ -1,0 +1,9 @@
+# Sumo API cache directory
+.sumo_cache/
+head_to_head.json
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+

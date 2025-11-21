@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from datetime import date, datetime
 from html import escape
+from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 from urllib.parse import quote_plus
 
@@ -53,6 +56,8 @@ import altair as alt
 SUMO_API_BASE_URL = "https://www.sumo-api.com/api"
 SUMO_API_CACHE_TTL = 60 * 60 * 24  # one day
 DEFAULT_DIVISION = "Makuuchi"
+CACHE_DIR = Path(".sumo_cache")
+HEAD_TO_HEAD_DB = Path("head_to_head.json")
 DIVISION_ORDER = {
     "Makuuchi": 0,
     "Juryo": 1,
@@ -167,6 +172,47 @@ def tournaments_dataframe(tournaments: Sequence[Tournament]) -> pd.DataFrame:
     )
 
 
+def _is_past_tournament(basho_id: str, tournaments: Sequence[Tournament]) -> bool:
+    """Check if a tournament is in the past."""
+    today = date.today()
+    for tournament in tournaments:
+        if tournament.basho_id == basho_id:
+            return tournament.end_date < today
+    return False
+
+
+def _get_cache_path(basho_id: str, cache_type: str, division: str | None = None, day: int | None = None) -> Path:
+    """Get the cache file path for a specific data type."""
+    if day is not None:
+        filename = f"{basho_id}_{cache_type}_{division}_day{day}.json"
+    elif division:
+        filename = f"{basho_id}_{cache_type}_{division}.json"
+    else:
+        filename = f"{basho_id}_{cache_type}.json"
+    return CACHE_DIR / filename
+
+
+def _load_from_cache(cache_path: Path) -> Dict | None:
+    """Load data from cache file if it exists."""
+    try:
+        if cache_path.exists():
+            with open(cache_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError, OSError):
+        pass
+    return None
+
+
+def _save_to_cache(cache_path: Path, data: Dict) -> None:
+    """Save data to cache file."""
+    try:
+        CACHE_DIR.mkdir(exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except (IOError, OSError):
+        pass  # Silently fail if cache write fails
+
+
 def _sumo_api_get(path: str, params: Dict[str, str] | None = None) -> Dict:
     """Call the public Sumo API and return JSON."""
 
@@ -180,17 +226,121 @@ def _sumo_api_get(path: str, params: Dict[str, str] | None = None) -> Dict:
 
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
-def fetch_basho_overview(basho_id: str) -> Dict:
+def fetch_basho_overview(basho_id: str, tournaments: Sequence[Tournament] | None = None) -> Dict:
     """Fetch high-level tournament results once per day."""
-
     return _sumo_api_get(f"/basho/{basho_id}")
 
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
-def fetch_torikumi_payload(basho_id: str, division: str, day: int) -> Dict:
+def fetch_torikumi_payload(basho_id: str, division: str, day: int, tournaments: Sequence[Tournament] | None = None) -> Dict:
     """Fetch torikumi data for a specific division and day."""
-
     return _sumo_api_get(f"/basho/{basho_id}/torikumi/{division}/{day}")
+
+
+def load_head_to_head_db() -> Dict[str, Dict]:
+    """Load head-to-head database from disk."""
+    if HEAD_TO_HEAD_DB.exists():
+        try:
+            with open(HEAD_TO_HEAD_DB, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+    return {}
+
+
+def save_head_to_head_db(db: Dict[str, Dict]) -> None:
+    """Save head-to-head database to disk."""
+    try:
+        with open(HEAD_TO_HEAD_DB, "w", encoding="utf-8") as f:
+            json.dump(db, f, ensure_ascii=False, indent=2)
+    except IOError:
+        pass
+
+
+def update_head_to_head_from_matches(matches: Sequence[Dict]) -> None:
+    """Update head-to-head database from completed matches."""
+    db = load_head_to_head_db()
+    
+    for match in matches:
+        east_name = match.get("eastShikona")
+        west_name = match.get("westShikona")
+        winner_name = match.get("winnerEn")
+        
+        if not all([east_name, west_name, winner_name]):
+            continue
+        
+        # Create sorted key for consistency
+        pair_key = "_vs_".join(sorted([east_name, west_name]))
+        
+        if pair_key not in db:
+            db[pair_key] = {
+                "wrestler1": sorted([east_name, west_name])[0],
+                "wrestler2": sorted([east_name, west_name])[1],
+                "wrestler1_wins": 0,
+                "wrestler2_wins": 0,
+                "total_matches": 0,
+                "last_winner": None
+            }
+        
+        # Update record
+        db[pair_key]["total_matches"] += 1
+        db[pair_key]["last_winner"] = winner_name
+        
+        if winner_name == db[pair_key]["wrestler1"]:
+            db[pair_key]["wrestler1_wins"] += 1
+        elif winner_name == db[pair_key]["wrestler2"]:
+            db[pair_key]["wrestler2_wins"] += 1
+    
+    save_head_to_head_db(db)
+
+
+def get_head_to_head_prediction(wrestler1: str, wrestler2: str) -> Dict[str, object]:
+    """Get head-to-head record and prediction for two wrestlers."""
+    db = load_head_to_head_db()
+    pair_key = "_vs_".join(sorted([wrestler1, wrestler2]))
+    
+    if pair_key not in db:
+        return {
+            "total_matches": 0,
+            "wrestler1_wins": 0,
+            "wrestler2_wins": 0,
+            "prediction": "No previous matches",
+            "confidence": 0.0
+        }
+    
+    record = db[pair_key]
+    total = record["total_matches"]
+    
+    # Determine which wrestler is which in the stored record
+    w1_is_first = wrestler1 == record["wrestler1"]
+    w1_wins = record["wrestler1_wins"] if w1_is_first else record["wrestler2_wins"]
+    w2_wins = record["wrestler2_wins"] if w1_is_first else record["wrestler1_wins"]
+    
+    # Calculate win percentages
+    w1_pct = w1_wins / total if total > 0 else 0.5
+    w2_pct = w2_wins / total if total > 0 else 0.5
+    
+    # Make prediction
+    if w1_wins > w2_wins:
+        predicted_winner = wrestler1
+        confidence = w1_pct
+    elif w2_wins > w1_wins:
+        predicted_winner = wrestler2
+        confidence = w2_pct
+    else:
+        predicted_winner = "Even"
+        confidence = 0.5
+    
+    return {
+        "total_matches": total,
+        "wrestler1_wins": w1_wins,
+        "wrestler2_wins": w2_wins,
+        "wrestler1_win_pct": w1_pct,
+        "wrestler2_win_pct": w2_pct,
+        "prediction": predicted_winner,
+        "confidence": confidence,
+        "last_winner": record.get("last_winner")
+    }
 
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
@@ -202,13 +352,12 @@ def fetch_head_to_head_pair(pair: tuple[int, int]) -> Dict:
 
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
-def fetch_completed_torikumi(basho_id: str, division: str) -> Dict[int, List[Dict]]:
+def fetch_completed_torikumi(basho_id: str, division: str, tournaments: Sequence[Tournament] | None = None) -> Dict[int, List[Dict]]:
     """Return torikumi for every fully completed day."""
-
     completed: Dict[int, List[Dict]] = {}
     for day in range(1, 16):
         try:
-            payload = fetch_torikumi_payload(basho_id, division, day)
+            payload = fetch_torikumi_payload(basho_id, division, day, tournaments)
         except RuntimeError:
             break
         matches = payload.get("torikumi") or []
@@ -346,12 +495,12 @@ def generate_match_bubbles(match_history: List[Dict[str, object]]) -> str:
         if is_win:
             # Filled green circle for win with tooltip
             bubbles.append(
-                f'<span title="{tooltip}" style="cursor:pointer;color:#4CAF50;font-size:14px;">●</span>'
+                f'<span title="{tooltip}" style="cursor:pointer;color:#4CAF50;font-size:28px;">●</span>'
             )
         else:
             # Empty circle for loss with tooltip
             bubbles.append(
-                f'<span title="{tooltip}" style="cursor:pointer;color:#666;font-size:14px;">○</span>'
+                f'<span title="{tooltip}" style="cursor:pointer;color:#666;font-size:28px;">○</span>'
             )
     
     return " ".join(bubbles)
@@ -864,8 +1013,15 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
         index=default_index,
     )
     chosen = next(t for t in tournaments if t.name == current)
-    completed_days = fetch_completed_torikumi(chosen.basho_id, DEFAULT_DIVISION)
+    completed_days = fetch_completed_torikumi(chosen.basho_id, DEFAULT_DIVISION, tournaments)
     latest_completed_day = max(completed_days.keys()) if completed_days else 0
+    
+    # Update head-to-head database with completed matches
+    if completed_days:
+        all_matches = []
+        for day_matches in completed_days.values():
+            all_matches.extend(day_matches)
+        update_head_to_head_from_matches(all_matches)
     scoreboard_records = compute_rikishi_records(completed_days)
     match_history = build_match_history(completed_days)
     scoreboard = scoreboard_dataframe(scoreboard_records, match_history=match_history, limit=15)
@@ -922,32 +1078,6 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
     else:
         st.info("Scoreboard will appear once winners are recorded.")
 
-    st.markdown("### Live Feed")
-    auto_refresh = st.checkbox("Auto-refresh every 5 minutes", value=False)
-    if auto_refresh:
-        st.autorefresh(interval=300_000, key="live-feed-refresh")
-    live_updates: List[Tuple[int, Dict]] = []
-    for day_idx in sorted(completed_days.keys(), reverse=True):
-        for match in reversed(completed_days[day_idx]):
-            if match.get("winnerEn"):
-                live_updates.append((day_idx, match))
-            if len(live_updates) >= 5:
-                break
-        if len(live_updates) >= 5:
-            break
-    if live_updates:
-        for day_idx, match in live_updates:
-            loser = (
-                match.get("westShikona")
-                if match.get("winnerEn") == match.get("eastShikona")
-                else match.get("eastShikona")
-            )
-            st.markdown(
-                f"- Day {day_idx}: {match.get('winnerEn')} def. {loser} via {match.get('kimarite')}"
-            )
-    else:
-        st.caption("Waiting for completed bouts to populate the feed.")
-
     default_slider_value = latest_completed_day or 1
     day = st.slider("Completed day", min_value=1, max_value=15, value=default_slider_value)
     st.caption(
@@ -957,7 +1087,7 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
     st.caption("Sumo-API data is cached for 24 hours to respect the free tier.")
 
     try:
-        overview = fetch_basho_overview(chosen.basho_id)
+        overview = fetch_basho_overview(chosen.basho_id, tournaments)
     except RuntimeError as exc:
         st.warning(f"Could not load tournament overview: {exc}")
         overview = None
@@ -997,7 +1127,7 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
         day_results = completed_days[day]
     else:
         try:
-            day_payload = fetch_torikumi_payload(chosen.basho_id, DEFAULT_DIVISION, day)
+            day_payload = fetch_torikumi_payload(chosen.basho_id, DEFAULT_DIVISION, day, tournaments)
             day_results = day_payload.get("torikumi") or []
         except RuntimeError as exc:
             st.error(f"Unable to load results for day {day}: {exc}")
@@ -1012,7 +1142,7 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
     if next_day <= 15:
         st.markdown(f"### Day {next_day} Matches & Head-to-heads")
         try:
-            next_payload = fetch_torikumi_payload(chosen.basho_id, DEFAULT_DIVISION, next_day)
+            next_payload = fetch_torikumi_payload(chosen.basho_id, DEFAULT_DIVISION, next_day, tournaments)
             upcoming = next_payload.get("torikumi") or []
         except RuntimeError as exc:
             st.warning(f"Unable to load day {next_day} torikumi: {exc}")
@@ -1024,74 +1154,145 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
             for match in upcoming:
                 east_name = match.get("eastShikona")
                 west_name = match.get("westShikona")
-                st.markdown(
-                    f"**Bout {match.get('matchNo')}: {east_name} ({match.get('eastRank')}) "
-                    f"vs {west_name} ({match.get('westRank')})**"
-                )
-                east_id = match.get("eastId")
-                west_id = match.get("westId")
-                if east_id is None or west_id is None:
-                    st.caption("Head-to-head data unavailable for this bout.")
+                east_rank = match.get("eastRank")
+                west_rank = match.get("westRank")
+                
+                # Get prediction from local database
+                h2h_pred = get_head_to_head_prediction(east_name, west_name)
+                
+                # Get current tournament records
+                east_record = scoreboard_records.get(east_name, {})
+                west_record = scoreboard_records.get(west_name, {})
+                east_wins = east_record.get("wins", 0)
+                east_losses = east_record.get("losses", 0)
+                west_wins = west_record.get("wins", 0)
+                west_losses = west_record.get("losses", 0)
+                
+                # Get recent form (last 5 matches)
+                east_history = match_history.get(east_name, [])[-5:] if match_history.get(east_name) else []
+                west_history = match_history.get(west_name, [])[-5:] if match_history.get(west_name) else []
+                
+                # Calculate combined confidence
+                h2h_confidence = h2h_pred["confidence"]
+                
+                # Determine predicted winner with icon
+                if h2h_pred["prediction"] == east_name:
+                    predicted_winner = east_name
+                    confidence = h2h_confidence
+                    winner_side = "east"
+                elif h2h_pred["prediction"] == west_name:
+                    predicted_winner = west_name
+                    confidence = h2h_confidence
+                    winner_side = "west"
                 else:
-                    try:
-                        summary = summarize_head_to_head(east_id, west_id, east_name, west_name)
-                        st.caption(summary["record"])
-                        if summary["last_result"]:
-                            st.caption(summary["last_result"])
-                        recent_results = summary.get("recent_results") or []
-                        if recent_results:
-                            st.markdown("Recent meetings:")
-                            for result in recent_results:
-                                st.caption(f"- {result}")
-                        technique_rows = summary.get("technique_breakdown") or []
-                        if technique_rows:
-                            technique_df = pd.DataFrame(technique_rows)
-                            chart = (
-                                alt.Chart(technique_df)
-                                .mark_bar()
-                                .encode(
-                                    x=alt.X("Wins:Q", title="Wins"),
-                                    y=alt.Y("Technique:N", sort="-x"),
-                                    color=alt.Color("Rikishi:N", legend=alt.Legend(title="Winner")),
-                                )
-                                .properties(height=120)
+                    predicted_winner = "Even matchup"
+                    confidence = 0.5
+                    winner_side = "none"
+                
+                # Create expander for each match
+                with st.expander(
+                    f"**Bout {match.get('matchNo')}: {east_name} vs {west_name}**" +
+                    (f" → Predicted: {predicted_winner} ({confidence*100:.0f}%)" if winner_side != "none" else " → Even matchup"),
+                    expanded=False
+                ):
+                    # Visual prediction gauge
+                    col1, col2, col3 = st.columns([1, 3, 1])
+                    with col1:
+                        st.markdown(f"**{east_name}**")
+                        st.caption(f"{east_rank}")
+                        if east_wins + east_losses > 0:
+                            st.caption(f"Record: {east_wins}-{east_losses}")
+                    with col2:
+                        # Confidence bar
+                        if winner_side == "east":
+                            bar_value = confidence
+                            st.progress(bar_value, text=f"← {confidence*100:.0f}% favored")
+                        elif winner_side == "west":
+                            bar_value = 1 - confidence
+                            st.progress(bar_value, text=f"{confidence*100:.0f}% favored →")
+                        else:
+                            st.progress(0.5, text="Even odds (50%)")
+                    with col3:
+                        st.markdown(f"**{west_name}**")
+                        st.caption(f"{west_rank}")
+                        if west_wins + west_losses > 0:
+                            st.caption(f"Record: {west_wins}-{west_losses}")
+                    
+                    st.divider()
+                    
+                    # Head-to-head stats
+                    if h2h_pred["total_matches"] > 0:
+                        st.markdown("**📊 Head-to-Head Record**")
+                        h2h_col1, h2h_col2 = st.columns(2)
+                        with h2h_col1:
+                            st.metric(
+                                east_name,
+                                f"{h2h_pred['wrestler1_wins']} wins",
+                                f"{h2h_pred['wrestler1_win_pct']*100:.0f}%"
                             )
-                            st.altair_chart(chart, use_container_width=True)
-                        east_prob, west_prob, rationale = estimate_win_probability(
-                            east_name, west_name, summary, scoreboard_records
-                        )
-                        st.caption(
-                            f"Projected odds: {east_name} {east_prob*100:.1f}% vs "
-                            f"{west_name} {west_prob*100:.1f}% ({rationale})"
-                        )
-                    except RuntimeError as exc:
-                        st.caption(f"Head-to-head unavailable: {exc}")
+                        with h2h_col2:
+                            st.metric(
+                                west_name,
+                                f"{h2h_pred['wrestler2_wins']} wins",
+                                f"{h2h_pred['wrestler2_win_pct']*100:.0f}%"
+                            )
+                        st.caption(f"Total meetings: {h2h_pred['total_matches']}")
+                        if h2h_pred.get("last_winner"):
+                            st.caption(f"Last winner: {h2h_pred['last_winner']}")
+                    else:
+                        st.info("**First-time meeting** - No historical head-to-head data")
+                    
+                    # Recent form
+                    if east_history or west_history:
+                        st.markdown("**📈 Recent Form (Last 5 Matches)**")
+                        form_col1, form_col2 = st.columns(2)
+                        with form_col1:
+                            if east_history:
+                                form_bubbles = " ".join(["🟢" if m["is_win"] else "⚪" for m in east_history])
+                                st.caption(f"{east_name}: {form_bubbles}")
+                            else:
+                                st.caption(f"{east_name}: No data")
+                        with form_col2:
+                            if west_history:
+                                form_bubbles = " ".join(["🟢" if m["is_win"] else "⚪" for m in west_history])
+                                st.caption(f"{west_name}: {form_bubbles}")
+                            else:
+                                st.caption(f"{west_name}: No data")
+                
+                    
+                    # Make your pick
+                    st.markdown("**🎯 Make Your Pick**")
+                    pick_options = [east_name, west_name, "(skip)"]
+                    bout_key = f"{chosen.basho_id}-day{next_day}:{east_name}vs{west_name}"
+                    saved_pick = st.session_state["pick_log"].get(bout_key)
+                    if saved_pick == east_name:
+                        default_index = 0
+                    elif saved_pick == west_name:
+                        default_index = 1
+                    else:
+                        default_index = 2
 
-                pick_options = ["(skip)", east_name, west_name]
-                bout_key = f"{chosen.basho_id}-day{next_day}:{east_name}vs{west_name}"
-                saved_pick = st.session_state["pick_log"].get(bout_key)
-                if saved_pick == east_name:
-                    default_index = 1
-                elif saved_pick == west_name:
-                    default_index = 2
-                else:
-                    default_index = 0
-
-                pick = st.radio(
-                    label="Select your pick",
-                    options=pick_options,
-                    horizontal=True,
-                    key=f"pick-{bout_key}",
-                    index=default_index,
-                )
-                record_pick(
-                    tournament_id=chosen.basho_id,
-                    day=next_day,
-                    east=east_name,
-                    west=west_name,
-                    pick=None if pick == "(skip)" else pick,
-                )
-                st.divider()
+                    pick = st.radio(
+                        label="Who will win?",
+                        options=pick_options,
+                        horizontal=True,
+                        key=f"pick-{bout_key}",
+                        index=default_index,
+                    )
+                    record_pick(
+                        tournament_id=chosen.basho_id,
+                        day=next_day,
+                        east=east_name,
+                        west=west_name,
+                        pick=None if pick == "(skip)" else pick,
+                    )
+                    
+                    if pick != "(skip)":
+                        agrees = (pick == predicted_winner) if winner_side != "none" else False
+                        if agrees:
+                            st.success(f"✓ You agree with the prediction ({predicted_winner})")
+                        elif winner_side != "none":
+                            st.warning(f"⚠ You're going against the prediction (favors {predicted_winner})")
     else:
         st.info("Day 15 is the final day of the tournament.")
 
