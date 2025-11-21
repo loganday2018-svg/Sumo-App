@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from html import escape
 from typing import Dict, List, Sequence, Tuple
+from urllib.parse import quote_plus
 
 import requests
 import pandas as pd
@@ -255,55 +257,193 @@ def torikumi_results_dataframe(results: Dict[int, Sequence[Dict]]) -> pd.DataFra
     return pd.DataFrame(rows)
 
 
-def scoreboard_dataframe(
-    results: Dict[int, Sequence[Dict]], limit: int = 15
-) -> pd.DataFrame:
+def compute_rikishi_records(results: Dict[int, Sequence[Dict]]) -> Dict[str, Dict[str, object]]:
     """Aggregate wins/losses for each rikishi from completed days."""
 
-    stats: Dict[int, Dict[str, object]] = {}
+    stats: Dict[str, Dict[str, object]] = {}
     for matches in results.values():
         for match in matches:
-            east_id = match.get("eastId")
-            west_id = match.get("westId")
-            winner_id = match.get("winnerId")
-            if east_id is None or west_id is None or winner_id is None:
+            east_name = match.get("eastShikona") or f"east-{match.get('eastId')}"
+            west_name = match.get("westShikona") or f"west-{match.get('westId')}"
+            east_rank = match.get("eastRank")
+            west_rank = match.get("westRank")
+            winner_name = match.get("winnerEn")
+            if not winner_name:
                 continue
 
-            for side, rikishi_id in (("east", east_id), ("west", west_id)):
-                if rikishi_id not in stats:
-                    stats[rikishi_id] = {
-                        "shikona": match.get(f"{side}Shikona"),
-                        "rank": match.get(f"{side}Rank"),
+            for name, rank in ((east_name, east_rank), (west_name, west_rank)):
+                if name not in stats:
+                    stats[name] = {
+                        "rank": rank or "-",
                         "wins": 0,
                         "losses": 0,
                     }
 
-            if winner_id == east_id:
-                stats[east_id]["wins"] = int(stats[east_id]["wins"]) + 1
-                stats[west_id]["losses"] = int(stats[west_id]["losses"]) + 1
-            elif winner_id == west_id:
-                stats[west_id]["wins"] = int(stats[west_id]["wins"]) + 1
-                stats[east_id]["losses"] = int(stats[east_id]["losses"]) + 1
+            if winner_name == east_name:
+                stats[east_name]["wins"] = int(stats[east_name]["wins"]) + 1
+                stats[west_name]["losses"] = int(stats[west_name]["losses"]) + 1
+            elif winner_name == west_name:
+                stats[west_name]["wins"] = int(stats[west_name]["wins"]) + 1
+                stats[east_name]["losses"] = int(stats[east_name]["losses"]) + 1
+
+    return stats
+
+
+def build_match_history(results: Dict[int, Sequence[Dict]]) -> Dict[str, List[Dict[str, object]]]:
+    """Build chronological match history with opponent details for each rikishi."""
+    
+    history: Dict[str, List[Dict[str, object]]] = {}
+    
+    # Process matches in chronological order (by day, then by match order)
+    for day in sorted(results.keys()):
+        for match in results[day]:
+            east_name = match.get("eastShikona") or f"east-{match.get('eastId')}"
+            west_name = match.get("westShikona") or f"west-{match.get('westId')}"
+            winner_name = match.get("winnerEn")
+            
+            if not winner_name:
+                continue
+            
+            # Initialize history if needed
+            if east_name not in history:
+                history[east_name] = []
+            if west_name not in history:
+                history[west_name] = []
+            
+            # Record match details
+            east_won = winner_name == east_name
+            history[east_name].append({
+                "is_win": east_won,
+                "opponent": west_name,
+                "day": day,
+                "result": "Win" if east_won else "Loss"
+            })
+            history[west_name].append({
+                "is_win": not east_won,
+                "opponent": east_name,
+                "day": day,
+                "result": "Win" if not east_won else "Loss"
+            })
+    
+    return history
+
+
+def generate_match_bubbles(match_history: List[Dict[str, object]]) -> str:
+    """Generate HTML bubbles with tooltips for match results."""
+    
+    if not match_history:
+        return ""
+    
+    bubbles = []
+    for match_info in match_history:
+        is_win = match_info["is_win"]
+        opponent = escape(str(match_info["opponent"]))
+        day = match_info["day"]
+        result = match_info["result"]
+        
+        tooltip = escape(f"Day {day}: {result} vs {opponent}")
+        
+        if is_win:
+            # Filled green circle for win with tooltip
+            bubbles.append(
+                f'<span title="{tooltip}" style="cursor:pointer;color:#4CAF50;font-size:14px;">●</span>'
+            )
+        else:
+            # Empty circle for loss with tooltip
+            bubbles.append(
+                f'<span title="{tooltip}" style="cursor:pointer;color:#666;font-size:14px;">○</span>'
+            )
+    
+    return " ".join(bubbles)
+
+
+def scoreboard_dataframe(
+    records: Dict[str, Dict[str, object]], 
+    match_history: Dict[str, List[Dict[str, object]]] | None = None,
+    limit: int | None = 15
+) -> pd.DataFrame:
+    """Convert aggregated records into a dataframe."""
+
+    if not records:
+        return pd.DataFrame()
 
     rows: List[Dict[str, object]] = []
-    for payload in stats.values():
+    for name, payload in records.items():
         wins = int(payload["wins"])
         losses = int(payload["losses"])
+        
+        # Get match history bubbles for this wrestler
+        history = match_history.get(name, []) if match_history else []
+        match_bubbles = generate_match_bubbles(history)
+        
         rows.append(
             {
-                "Shikona": payload.get("shikona") or "Unknown",
+                "Avatar": build_rikishi_avatar_url(name),
+                "Shikona": name,
                 "Rank": payload.get("rank") or "-",
                 "Wins": wins,
                 "Losses": losses,
+                "Matches": match_bubbles,
             }
         )
 
-    if not rows:
-        return pd.DataFrame()
-
     df = pd.DataFrame(rows)
     df = df.sort_values(["Wins", "Losses"], ascending=[False, True])
-    return df.head(limit).reset_index(drop=True)
+    if limit is not None:
+        df = df.head(limit)
+    return df.reset_index(drop=True)
+
+
+def estimate_win_probability(
+    east_name: str,
+    west_name: str,
+    summary: Dict[str, object],
+    records: Dict[str, Dict[str, object]],
+) -> Tuple[float, float, str]:
+    """Return estimated win probabilities using simple heuristics."""
+
+    def _win_pct(record: Dict[str, object] | None) -> float | None:
+        if not record:
+            return None
+        wins = int(record.get("wins", 0))
+        losses = int(record.get("losses", 0))
+        total = wins + losses
+        return wins / total if total else None
+
+    east_form = _win_pct(records.get(east_name))
+    west_form = _win_pct(records.get(west_name))
+
+    base = 0.5
+    if east_form is not None and west_form is not None:
+        base += 0.2 * (east_form - west_form)
+
+    total_series = summary.get("total", 0) or 0
+    east_series = summary.get("east_wins", 0) or 0
+    west_series = summary.get("west_wins", 0) or 0
+    if total_series > 0:
+        series_ratio = (east_series + 1) / (total_series + 2)
+        base += 0.3 * (series_ratio - 0.5)
+
+    base = max(0.1, min(0.9, base))
+    east_prob = round(base, 3)
+    west_prob = round(1 - base, 3)
+    reason_parts = []
+    if east_form is not None and west_form is not None:
+        reason_parts.append(f"form diff {east_form:.2f}-{west_form:.2f}")
+    if total_series:
+        reason_parts.append(f"H2H {east_series}-{west_series}")
+    rationale = "; ".join(reason_parts) or "insufficient data"
+    return east_prob, west_prob, rationale
+
+
+def build_rikishi_avatar_url(name: str) -> str:
+    """Return a deterministic avatar URL for a given shikona."""
+
+    encoded = quote_plus(name)
+    return (
+        "https://ui-avatars.com/api/"
+        f"?name={encoded}&background=EB3223&color=FFFFFF&size=64&rounded=true&bold=true"
+    )
 
 
 def _division_from_rank(rank: str | None) -> str:
@@ -627,6 +767,73 @@ def render_rikishi_tab() -> None:
             + ", ".join(f"{name} ({count})" for name, count in sansho.items())
         )
 
+    st.markdown("### Matchup Lab")
+    if len(detail_names) < 2:
+        st.info("Adjust filters to load at least two rikishi for comparisons.")
+    else:
+        matchup_cols = st.columns(2)
+        with matchup_cols[0]:
+            contender_a = st.selectbox("Rikishi A", detail_names, key="matchup_a")
+        with matchup_cols[1]:
+            contender_b = st.selectbox(
+                "Rikishi B", detail_names, index=1 if len(detail_names) > 1 else 0, key="matchup_b"
+            )
+        if contender_a == contender_b:
+            st.warning("Select two different rikishi to run the matchup analysis.")
+        else:
+            row_a = filtered_df[filtered_df["Shikona"] == contender_a].iloc[0]
+            row_b = filtered_df[filtered_df["Shikona"] == contender_b].iloc[0]
+            try:
+                summary = summarize_head_to_head(
+                    int(row_a["ID"]),
+                    int(row_b["ID"]),
+                    contender_a,
+                    contender_b,
+                )
+                st.caption(summary["record"])
+                if summary["last_result"]:
+                    st.caption(summary["last_result"])
+                recent_results = summary.get("recent_results") or []
+                if recent_results:
+                    st.markdown("Recent meetings:")
+                    for result in recent_results:
+                        st.caption(f"- {result}")
+                technique_rows = summary.get("technique_breakdown") or []
+                if technique_rows:
+                    technique_df = pd.DataFrame(technique_rows)
+                    chart = (
+                        alt.Chart(technique_df)
+                        .mark_bar()
+                        .encode(
+                            x=alt.X("Wins:Q", title="Wins"),
+                            y=alt.Y("Technique:N", sort="-x"),
+                            color=alt.Color("Rikishi:N", legend=alt.Legend(title="Winner")),
+                        )
+                        .properties(height=150)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+            except RuntimeError as exc:
+                st.error(f"Head-to-head data unavailable: {exc}")
+
+            stats_a = fetch_rikishi_stats(int(row_a["ID"]))
+            stats_b = fetch_rikishi_stats(int(row_b["ID"]))
+            stat_cols = st.columns(2)
+            for col, name, stats_payload in zip(stat_cols, (contender_a, contender_b), (stats_a, stats_b)):
+                win_pct = (
+                    stats_payload.get("totalWins", 0) / stats_payload.get("totalMatches", 1)
+                    if stats_payload.get("totalMatches")
+                    else 0
+                )
+                col.metric(
+                    f"{name} win rate",
+                    f"{win_pct * 100:.1f}% ({stats_payload.get('totalWins', 0)}-{stats_payload.get('totalLosses', 0)})",
+                )
+                sansho = stats_payload.get("sansho") or {}
+                if sansho:
+                    col.caption(
+                        "Sansho: " + ", ".join(f"{title} ({count})" for title, count in sansho.items())
+                    )
+
     st.markdown("### Favorites")
     favorite_container = st.columns(2)
     with favorite_container[0]:
@@ -659,10 +866,54 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
     chosen = next(t for t in tournaments if t.name == current)
     completed_days = fetch_completed_torikumi(chosen.basho_id, DEFAULT_DIVISION)
     latest_completed_day = max(completed_days.keys()) if completed_days else 0
-    scoreboard = scoreboard_dataframe(completed_days)
+    scoreboard_records = compute_rikishi_records(completed_days)
+    match_history = build_match_history(completed_days)
+    scoreboard = scoreboard_dataframe(scoreboard_records, match_history=match_history, limit=15)
     if not scoreboard.empty:
         st.markdown("### Scoreboard (Top Performers)")
-        st.dataframe(scoreboard, use_container_width=True, hide_index=True)
+        
+        # Create custom HTML table with tooltips for match bubbles
+        html_rows = []
+        for _, row in scoreboard.iterrows():
+            matches_html = row["Matches"]
+            avatar_url = escape(str(row['Avatar']))
+            shikona = escape(str(row['Shikona']))
+            rank = escape(str(row['Rank']))
+            html_rows.append(
+                f'<tr>'
+                f'<td style="padding:8px;"><img src="{avatar_url}" width="40" height="40" style="border-radius:50%;"></td>'
+                f'<td style="padding:8px;"><strong>{shikona}</strong></td>'
+                f'<td style="padding:8px;">{rank}</td>'
+                f'<td style="padding:8px;text-align:center;">{row["Wins"]}</td>'
+                f'<td style="padding:8px;text-align:center;">{row["Losses"]}</td>'
+                f'<td style="padding:8px;">{matches_html}</td>'
+                f'</tr>'
+            )
+        
+        html_table = (
+            '<div style="overflow-x:auto;">'
+            '<table style="width:100%;border-collapse:collapse;border:1px solid #ddd;">'
+            '<thead>'
+            '<tr style="background-color:#f0f0f0;border-bottom:2px solid #ddd;">'
+            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Avatar</th>'
+            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Shikona</th>'
+            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Rank</th>'
+            '<th style="padding:8px;text-align:center;border:1px solid #ddd;">Wins</th>'
+            '<th style="padding:8px;text-align:center;border:1px solid #ddd;">Losses</th>'
+            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Match Results</th>'
+            '</tr>'
+            '</thead>'
+            '<tbody>'
+            + ''.join(html_rows) +
+            '</tbody>'
+            '</table>'
+            '</div>'
+        )
+        try:
+            import streamlit.components.v1 as components
+            components.html(html_table, height=600, scrolling=True)
+        except ImportError:
+            st.markdown(html_table, unsafe_allow_html=True)
         top_rows = scoreboard.head(min(3, len(scoreboard)))
         columns = st.columns(len(top_rows))
         for col, (_, row) in zip(columns, top_rows.iterrows()):
@@ -670,6 +921,32 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
             col.metric(label=row["Shikona"], value=record)
     else:
         st.info("Scoreboard will appear once winners are recorded.")
+
+    st.markdown("### Live Feed")
+    auto_refresh = st.checkbox("Auto-refresh every 5 minutes", value=False)
+    if auto_refresh:
+        st.autorefresh(interval=300_000, key="live-feed-refresh")
+    live_updates: List[Tuple[int, Dict]] = []
+    for day_idx in sorted(completed_days.keys(), reverse=True):
+        for match in reversed(completed_days[day_idx]):
+            if match.get("winnerEn"):
+                live_updates.append((day_idx, match))
+            if len(live_updates) >= 5:
+                break
+        if len(live_updates) >= 5:
+            break
+    if live_updates:
+        for day_idx, match in live_updates:
+            loser = (
+                match.get("westShikona")
+                if match.get("winnerEn") == match.get("eastShikona")
+                else match.get("eastShikona")
+            )
+            st.markdown(
+                f"- Day {day_idx}: {match.get('winnerEn')} def. {loser} via {match.get('kimarite')}"
+            )
+    else:
+        st.caption("Waiting for completed bouts to populate the feed.")
 
     default_slider_value = latest_completed_day or 1
     day = st.slider("Completed day", min_value=1, max_value=15, value=default_slider_value)
@@ -780,6 +1057,13 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
                                 .properties(height=120)
                             )
                             st.altair_chart(chart, use_container_width=True)
+                        east_prob, west_prob, rationale = estimate_win_probability(
+                            east_name, west_name, summary, scoreboard_records
+                        )
+                        st.caption(
+                            f"Projected odds: {east_name} {east_prob*100:.1f}% vs "
+                            f"{west_name} {west_prob*100:.1f}% ({rationale})"
+                        )
                     except RuntimeError as exc:
                         st.caption(f"Head-to-head unavailable: {exc}")
 
