@@ -67,6 +67,15 @@ DIVISION_ORDER = {
     "Jonokuchi": 5,
 }
 
+# Rank ordering for upset magnitude calculation (lower = higher rank)
+RANK_ORDER = {
+    "Yokozuna": 1,
+    "Ozeki": 2,
+    "Sekiwake": 3,
+    "Komusubi": 4,
+}
+# Maegashira ranks get 5 + their number (M1 = 6, M2 = 7, etc.)
+
 
 # ==================== Data Models ====================
 
@@ -100,21 +109,56 @@ def assemble_tournaments(year: int) -> List[Tournament]:
         ("Kyushu Basho", "Fukuoka", "November", "Fukuoka Kokusai Center", (11, 9), (11, 23)),
     ]
 
-    highlights: Dict[str, str] = {
-        "Hatsu Basho": "New Year kickoff with debuts from the latest banzuke.",
-        "Haru Basho": "Crowd-favorite crowd noise inside Edion Arena.",
-        "Nagoya Basho": "Sweltering summer meet known for marathon bouts.",
-        "Kyushu Basho": "Season finale and last chance at yearly awards.",
+    # Year-specific champion and highlight data
+    champions_by_year: Dict[int, Dict[str, str]] = {
+        2024: {
+            "Hatsu Basho": "Terunofuji",    # 13-2
+            "Haru Basho": "Onosato",        # 13-2, makuuchi debut yusho
+            "Natsu Basho": "Onosato",       # 12-3
+            "Nagoya Basho": "Onosato",      # 13-2
+            "Aki Basho": "Onosato",         # 13-2
+            "Kyushu Basho": "Kotozakura",   # 14-1, became Ozeki
+        },
+        2025: {
+            "Hatsu Basho": "Hoshoryu",      # 12-3 playoff win, became 74th Yokozuna
+            "Haru Basho": "Onosato",        # 12-3
+            "Natsu Basho": "Onosato",       # 14-1, became 75th Yokozuna  
+            "Nagoya Basho": "Kotoshoho",    # 13-2, first yusho
+            "Aki Basho": "Onosato",         # Playoff win vs Hoshoryu
+            "Kyushu Basho": "Aonishiki",    # 12-3 playoff win vs Hoshoryu
+        },
+        2026: {},  # Future year - no champions yet
     }
-
-    champions = {
-        "Hatsu Basho": "Terunofuji",
-        "Haru Basho": "Kirishima",
-        "Natsu Basho": "Takakeisho",
-        "Nagoya Basho": "Hoshoryu",
-        "Aki Basho": "Kotonowaka",
-        "Kyushu Basho": "Daieisho",
+    
+    highlights_by_year: Dict[int, Dict[str, str]] = {
+        2024: {
+            "Hatsu Basho": "Terunofuji returns from injury for his 10th yusho.",
+            "Haru Basho": "Onosato's stunning makuuchi debut yusho.",
+            "Natsu Basho": "Onosato continues his dominant rookie year.",
+            "Nagoya Basho": "Onosato earns Ozeki promotion.",
+            "Aki Basho": "Onosato's 4th straight yusho as new Ozeki.",
+            "Kyushu Basho": "Kotozakura claims the cup, earns Ozeki rank.",
+        },
+        2025: {
+            "Hatsu Basho": "Hoshoryu wins 3-way playoff to become 74th Yokozuna.",
+            "Haru Basho": "Onosato's back-to-back run begins.",
+            "Natsu Basho": "Onosato goes 14-1, becomes 75th Yokozuna — fastest ever.",
+            "Nagoya Basho": "Kotoshoho shocks the field for his first Emperor's Cup.",
+            "Aki Basho": "Epic Yokozuna vs Yokozuna playoff — Onosato prevails.",
+            "Kyushu Basho": "Aonishiki defeats Hoshoryu in playoff, eyes Ozeki.",
+        },
+        2026: {
+            "Hatsu Basho": "New Year kickoff — who will start 2026 strong?",
+            "Haru Basho": "Spring tournament in Osaka.",
+            "Natsu Basho": "Summer showdown in Tokyo.",
+            "Nagoya Basho": "Sweltering summer meet at the new Aichi Arena.",
+            "Aki Basho": "Autumn tournament at historic Kokugikan.",
+            "Kyushu Basho": "Season finale and last chance at yearly awards.",
+        },
     }
+    
+    champions = champions_by_year.get(year, {})
+    highlights = highlights_by_year.get(year, {})
 
     tournaments: List[Tournament] = []
     for name, city, month, venue, start_parts, end_parts in template:
@@ -225,16 +269,57 @@ def _sumo_api_get(path: str, params: Dict[str, str] | None = None) -> Dict:
     return response.json()
 
 
+def _is_past_basho(basho_id: str) -> bool:
+    """Check if a basho is in the past (completed)."""
+    try:
+        year = int(basho_id[:4])
+        month = int(basho_id[4:6])
+        # Tournaments end around day 28 of the month
+        tournament_end = date(year, month, 28)
+        return date.today() > tournament_end
+    except (ValueError, IndexError):
+        return False
+
+
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
 def fetch_basho_overview(basho_id: str, tournaments: Sequence[Tournament] | None = None) -> Dict:
-    """Fetch high-level tournament results once per day."""
-    return _sumo_api_get(f"/basho/{basho_id}")
+    """Fetch high-level tournament results. Uses local cache for past tournaments."""
+    cache_path = CACHE_DIR / f"{basho_id}_overview.json"
+    
+    # Always try cache first
+    cached_data = _load_from_cache(cache_path)
+    if cached_data:
+        return cached_data
+    
+    # For past tournaments, if no cache exists, still try API but cache result
+    # For current tournaments, always fetch fresh
+    data = _sumo_api_get(f"/basho/{basho_id}")
+    
+    # Save to cache (especially important for completed tournaments)
+    if data and _is_past_basho(basho_id):
+        _save_to_cache(cache_path, data)
+    
+    return data
 
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
 def fetch_torikumi_payload(basho_id: str, division: str, day: int, tournaments: Sequence[Tournament] | None = None) -> Dict:
-    """Fetch torikumi data for a specific division and day."""
-    return _sumo_api_get(f"/basho/{basho_id}/torikumi/{division}/{day}")
+    """Fetch torikumi data for a specific division and day. Uses local cache for past tournaments."""
+    cache_path = CACHE_DIR / f"{basho_id}_torikumi_{division}_day{day}.json"
+    
+    # Always try cache first
+    cached_data = _load_from_cache(cache_path)
+    if cached_data:
+        return cached_data
+    
+    # Fetch from API
+    data = _sumo_api_get(f"/basho/{basho_id}/torikumi/{division}/{day}")
+    
+    # Save to cache for past tournaments
+    if data and _is_past_basho(basho_id):
+        _save_to_cache(cache_path, data)
+    
+    return data
 
 
 def load_head_to_head_db() -> Dict[str, Dict]:
@@ -345,10 +430,23 @@ def get_head_to_head_prediction(wrestler1: str, wrestler2: str) -> Dict[str, obj
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
 def fetch_head_to_head_pair(pair: tuple[int, int]) -> Dict:
-    """Fetch head-to-head results for a pair of rikishi IDs."""
-
+    """Fetch head-to-head results for a pair of rikishi IDs. Uses local cache when available."""
     rikishi_id, opponent_id = pair
-    return _sumo_api_get(f"/rikishi/{rikishi_id}/matches/{opponent_id}")
+    cache_path = CACHE_DIR / f"h2h_{rikishi_id}_{opponent_id}.json"
+    
+    # Try cache first
+    cached_data = _load_from_cache(cache_path)
+    if cached_data:
+        return cached_data
+    
+    # Fetch from API
+    data = _sumo_api_get(f"/rikishi/{rikishi_id}/matches/{opponent_id}")
+    
+    # Cache the result
+    if data:
+        _save_to_cache(cache_path, data)
+    
+    return data
 
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
@@ -414,18 +512,21 @@ def compute_rikishi_records(results: Dict[int, Sequence[Dict]]) -> Dict[str, Dic
         for match in matches:
             east_name = match.get("eastShikona") or f"east-{match.get('eastId')}"
             west_name = match.get("westShikona") or f"west-{match.get('westId')}"
+            east_id = match.get("eastId")
+            west_id = match.get("westId")
             east_rank = match.get("eastRank")
             west_rank = match.get("westRank")
             winner_name = match.get("winnerEn")
             if not winner_name:
                 continue
 
-            for name, rank in ((east_name, east_rank), (west_name, west_rank)):
+            for name, rank, rid in ((east_name, east_rank, east_id), (west_name, west_rank, west_id)):
                 if name not in stats:
                     stats[name] = {
                         "rank": rank or "-",
                         "wins": 0,
                         "losses": 0,
+                        "id": rid,
                     }
 
             if winner_name == east_name:
@@ -506,12 +607,543 @@ def generate_match_bubbles(match_history: List[Dict[str, object]]) -> str:
     return " ".join(bubbles)
 
 
+def calculate_momentum_score(
+    match_history: List[Dict[str, object]], 
+    records: Dict[str, Dict[str, object]]
+) -> Dict[str, object]:
+    """
+    Calculate a momentum score that weighs recent matches more heavily.
+    Returns a dict with score, label, description, and streak info.
+    """
+    if not match_history:
+        return {
+            "score": 0,
+            "label": "➖",
+            "description": "No matches yet",
+            "streak": 0,
+            "streak_type": None
+        }
+    
+    # Calculate weighted score (recent matches count more)
+    weighted_score = 0
+    total_weight = 0
+    
+    for i, match in enumerate(match_history):
+        # Weight increases for more recent matches (last match = highest weight)
+        weight = i + 1
+        total_weight += weight
+        if match["is_win"]:
+            weighted_score += weight
+        else:
+            weighted_score -= weight * 0.5  # Losses hurt less than wins help
+    
+    # Normalize to -1 to 1 scale
+    if total_weight > 0:
+        normalized = weighted_score / total_weight
+    else:
+        normalized = 0
+    
+    # Calculate current streak
+    streak = 0
+    streak_type = None
+    if match_history:
+        last_result = match_history[-1]["is_win"]
+        streak_type = "W" if last_result else "L"
+        for match in reversed(match_history):
+            if match["is_win"] == last_result:
+                streak += 1
+            else:
+                break
+    
+    # Determine momentum label and description
+    if normalized >= 0.6:
+        label = "🔥🔥"
+        description = f"On fire! {streak}{'W' if streak_type == 'W' else 'L'} streak" if streak >= 2 else "Hot form"
+    elif normalized >= 0.3:
+        label = "🔥"
+        description = f"Strong momentum" + (f" ({streak}W streak)" if streak >= 2 and streak_type == 'W' else "")
+    elif normalized >= -0.1:
+        label = "➖"
+        description = "Steady form"
+    elif normalized >= -0.4:
+        label = "❄️"
+        description = f"Cooling off" + (f" ({streak}L streak)" if streak >= 2 and streak_type == 'L' else "")
+    else:
+        label = "❄️❄️"
+        description = f"Ice cold! {streak}L streak" if streak >= 2 and streak_type == 'L' else "Struggling"
+    
+    return {
+        "score": round(normalized, 2),
+        "label": label,
+        "description": description,
+        "streak": streak,
+        "streak_type": streak_type
+    }
+
+
+# ==================== NEW FEATURES: Momentum, Upsets, Tale of the Tape ====================
+
+
+def parse_rank_to_number(rank: str | None) -> int:
+    """Convert a rank string to a numeric value for comparison (lower = higher rank)."""
+    if not rank:
+        return 99
+    
+    rank = rank.strip()
+    
+    # Check named ranks first
+    for named_rank, value in RANK_ORDER.items():
+        if rank.startswith(named_rank):
+            # Handle East/West distinction (East is slightly higher)
+            if "East" in rank or "e" in rank.split()[-1] if len(rank.split()) > 1 else False:
+                return value
+            return value + 0.5
+    
+    # Parse Maegashira ranks (M1, M2, etc.)
+    if rank.startswith("M") or rank.startswith("Maegashira"):
+        try:
+            # Extract number from rank like "M1" or "Maegashira 1"
+            parts = rank.replace("Maegashira", "M").split()
+            num_part = parts[0].replace("M", "") if parts else "17"
+            if not num_part:
+                num_part = parts[1] if len(parts) > 1 else "17"
+            num = int(num_part)
+            base = 5 + num
+            # East/West distinction
+            if len(parts) > 1 and parts[1].lower().startswith("e"):
+                return base
+            return base + 0.5
+        except (ValueError, IndexError):
+            return 20
+    
+    # Juryo and below
+    if rank.startswith("J") or rank.startswith("Juryo"):
+        return 25
+    
+    return 30  # Unknown ranks
+
+
+def calculate_upset_magnitude(winner_rank: str | None, loser_rank: str | None) -> Dict[str, object]:
+    """Calculate if a match result was an upset and its magnitude."""
+    winner_num = parse_rank_to_number(winner_rank)
+    loser_num = parse_rank_to_number(loser_rank)
+    
+    # Upset = lower-ranked wrestler (higher number) beats higher-ranked (lower number)
+    rank_diff = winner_num - loser_num
+    
+    if rank_diff <= 0:
+        # Favorite won, no upset
+        return {
+            "is_upset": False,
+            "magnitude": 0,
+            "label": None,
+            "rank_diff": rank_diff
+        }
+    
+    # Determine upset severity
+    if rank_diff >= 8:
+        label = "🚨 MASSIVE UPSET"
+        magnitude = 3
+    elif rank_diff >= 4:
+        label = "⚠️ Major Upset"
+        magnitude = 2
+    elif rank_diff >= 2:
+        label = "📢 Upset"
+        magnitude = 1
+    else:
+        label = "Minor upset"
+        magnitude = 0.5
+    
+    return {
+        "is_upset": True,
+        "magnitude": magnitude,
+        "label": label,
+        "rank_diff": rank_diff
+    }
+
+
+def analyze_upsets(results: Dict[int, Sequence[Dict]]) -> Dict[str, object]:
+    """Analyze all upsets in the tournament results."""
+    upsets: List[Dict] = []
+    giant_killers: Dict[str, int] = {}  # wrestler -> upset wins count
+    vulnerable: Dict[str, int] = {}  # high-ranked wrestler -> losses to lower-ranked
+    
+    for day, matches in results.items():
+        for match in matches:
+            winner_name = match.get("winnerEn")
+            if not winner_name:
+                continue
+            
+            east_name = match.get("eastShikona")
+            west_name = match.get("westShikona")
+            east_rank = match.get("eastRank")
+            west_rank = match.get("westRank")
+            
+            # Determine winner/loser ranks
+            if winner_name == east_name:
+                winner_rank, loser_rank = east_rank, west_rank
+                loser_name = west_name
+            else:
+                winner_rank, loser_rank = west_rank, east_rank
+                loser_name = east_name
+            
+            upset_info = calculate_upset_magnitude(winner_rank, loser_rank)
+            
+            if upset_info["is_upset"] and upset_info["magnitude"] >= 0.5:
+                upsets.append({
+                    "day": day,
+                    "winner": winner_name,
+                    "winner_rank": winner_rank,
+                    "loser": loser_name,
+                    "loser_rank": loser_rank,
+                    "magnitude": upset_info["magnitude"],
+                    "label": upset_info["label"],
+                    "kimarite": match.get("kimarite")
+                })
+                
+                # Track giant killers
+                giant_killers[winner_name] = giant_killers.get(winner_name, 0) + 1
+                
+                # Track vulnerable wrestlers (only for significant upsets)
+                if upset_info["magnitude"] >= 1:
+                    vulnerable[loser_name] = vulnerable.get(loser_name, 0) + 1
+    
+    # Sort upsets by magnitude and day
+    upsets.sort(key=lambda x: (-x["magnitude"], x["day"]))
+    
+    # Get top giant killers and vulnerable
+    top_giant_killers = sorted(giant_killers.items(), key=lambda x: -x[1])[:5]
+    top_vulnerable = sorted(vulnerable.items(), key=lambda x: -x[1])[:5]
+    
+    return {
+        "upsets": upsets,
+        "giant_killers": top_giant_killers,
+        "vulnerable": top_vulnerable,
+        "total_upsets": len(upsets),
+        "biggest_upset": upsets[0] if upsets else None
+    }
+
+
+def calculate_momentum_score(
+    match_history: List[Dict[str, object]],
+    records: Dict[str, Dict[str, object]]
+) -> Dict[str, object]:
+    """
+    Calculate a momentum score for a wrestler based on recent performance.
+    
+    Factors:
+    - Recent matches weighted more heavily (exponential decay)
+    - Opponent strength (beating higher-ranked = more momentum)
+    - Win streaks bonus
+    """
+    if not match_history:
+        return {
+            "score": 0,
+            "label": "➡️",
+            "description": "No matches yet",
+            "trend": "neutral",
+            "streak": 0,
+            "streak_type": None
+        }
+    
+    # Calculate weighted score (recent matches count more)
+    weights = []
+    base_weight = 1.0
+    decay = 0.8  # Each older match is worth 80% of the next
+    
+    for i, match in enumerate(reversed(match_history)):  # Most recent first
+        weight = base_weight * (decay ** i)
+        weights.append(weight)
+    
+    weights.reverse()  # Back to chronological order
+    
+    # Calculate momentum
+    momentum = 0.0
+    total_weight = sum(weights)
+    
+    for i, match in enumerate(match_history):
+        is_win = match["is_win"]
+        opponent = match["opponent"]
+        
+        # Base value: win = +1, loss = -1
+        base_value = 1.0 if is_win else -1.0
+        
+        # Opponent strength multiplier
+        opponent_record = records.get(opponent, {})
+        opponent_wins = int(opponent_record.get("wins", 0))
+        opponent_losses = int(opponent_record.get("losses", 0))
+        opponent_total = opponent_wins + opponent_losses
+        
+        if opponent_total > 0:
+            opponent_win_rate = opponent_wins / opponent_total
+            # Beating strong opponents (>60% win rate) gives bonus
+            # Losing to weak opponents (<40% win rate) gives penalty
+            if is_win and opponent_win_rate > 0.6:
+                base_value *= 1.3  # 30% bonus for quality win
+            elif not is_win and opponent_win_rate < 0.4:
+                base_value *= 1.3  # 30% extra penalty for bad loss
+        
+        momentum += base_value * weights[i]
+    
+    # Normalize by total weight
+    normalized_score = momentum / total_weight if total_weight > 0 else 0
+    
+    # Calculate current streak
+    streak = 0
+    streak_type = None
+    for match in reversed(match_history):
+        if streak == 0:
+            streak_type = "win" if match["is_win"] else "loss"
+            streak = 1
+        elif (match["is_win"] and streak_type == "win") or (not match["is_win"] and streak_type == "loss"):
+            streak += 1
+        else:
+            break
+    
+    # Streak bonus/penalty
+    if streak >= 3:
+        streak_modifier = 0.2 * (streak - 2)  # +0.2 per match beyond 2
+        if streak_type == "win":
+            normalized_score += streak_modifier
+        else:
+            normalized_score -= streak_modifier
+    
+    # Determine label and trend
+    if normalized_score >= 0.6:
+        label = "🔥🔥"
+        trend = "hot"
+        description = "On fire!"
+    elif normalized_score >= 0.3:
+        label = "🔥"
+        trend = "warming"
+        description = "Building momentum"
+    elif normalized_score >= -0.3:
+        label = "➡️"
+        trend = "neutral"
+        description = "Steady"
+    elif normalized_score >= -0.6:
+        label = "❄️"
+        trend = "cooling"
+        description = "Struggling"
+    else:
+        label = "❄️❄️"
+        trend = "cold"
+        description = "Ice cold"
+    
+    return {
+        "score": round(normalized_score, 2),
+        "label": label,
+        "description": description,
+        "trend": trend,
+        "streak": streak,
+        "streak_type": streak_type
+    }
+
+
+def generate_tale_of_tape_html(
+    east_name: str,
+    west_name: str,
+    east_data: Dict[str, object],
+    west_data: Dict[str, object],
+    east_momentum: Dict[str, object],
+    west_momentum: Dict[str, object],
+    h2h_summary: Dict[str, object] | None = None
+) -> str:
+    """Generate a visually rich 'Tale of the Tape' comparison card."""
+    
+    east_photo = east_data.get("photo_url", build_rikishi_avatar_url(east_name))
+    west_photo = west_data.get("photo_url", build_rikishi_avatar_url(west_name))
+    east_avatar = build_rikishi_avatar_url(east_name)
+    west_avatar = build_rikishi_avatar_url(west_name)
+    
+    # Format stats with fallbacks
+    def fmt(val, suffix=""):
+        return f"{val}{suffix}" if val else "—"
+    
+    east_height = fmt(east_data.get("height"), " cm")
+    west_height = fmt(west_data.get("height"), " cm")
+    east_weight = fmt(east_data.get("weight"), " kg")
+    west_weight = fmt(west_data.get("weight"), " kg")
+    east_age = fmt(east_data.get("age"))
+    west_age = fmt(west_data.get("age"))
+    east_record = f"{east_data.get('wins', 0)}-{east_data.get('losses', 0)}"
+    west_record = f"{west_data.get('wins', 0)}-{west_data.get('losses', 0)}"
+    
+    # H2H record
+    h2h_text = "First meeting"
+    if h2h_summary and h2h_summary.get("total", 0) > 0:
+        h2h_text = h2h_summary.get("record", "")
+    
+    html = f'''
+    <div style="
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #1a1a2e 100%);
+        border-radius: 12px;
+        padding: 20px;
+        border: 3px solid #c41e3a;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        font-family: 'Segoe UI', sans-serif;
+        color: #f5f5f5;
+        margin: 10px 0;
+    ">
+        <!-- Header -->
+        <div style="text-align:center;margin-bottom:15px;">
+            <div style="font-size:11px;color:#c41e3a;text-transform:uppercase;letter-spacing:3px;">Tale of the Tape</div>
+            <div style="font-size:10px;color:#888;margin-top:4px;">{escape(str(h2h_text))}</div>
+        </div>
+        
+        <!-- Main comparison -->
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <!-- East wrestler -->
+            <div style="text-align:center;flex:1;">
+                <img src="{escape(str(east_photo))}" 
+                     onerror="this.src='{escape(str(east_avatar))}'"
+                     style="width:80px;height:80px;border-radius:50%;border:3px solid #c41e3a;object-fit:cover;margin-bottom:8px;">
+                <div style="font-size:18px;font-weight:bold;color:#f5ede0;">{escape(east_name)}</div>
+                <div style="font-size:12px;color:#d4a574;">{escape(str(east_data.get('rank', '')))}</div>
+                <div style="font-size:20px;margin-top:4px;">{east_momentum.get('label', '➡️')}</div>
+                <div style="font-size:10px;color:#888;">{east_momentum.get('description', '')}</div>
+            </div>
+            
+            <!-- VS divider -->
+            <div style="text-align:center;padding:0 20px;">
+                <div style="font-size:28px;font-weight:bold;color:#c41e3a;">VS</div>
+            </div>
+            
+            <!-- West wrestler -->
+            <div style="text-align:center;flex:1;">
+                <img src="{escape(str(west_photo))}" 
+                     onerror="this.src='{escape(str(west_avatar))}'"
+                     style="width:80px;height:80px;border-radius:50%;border:3px solid #c41e3a;object-fit:cover;margin-bottom:8px;">
+                <div style="font-size:18px;font-weight:bold;color:#f5ede0;">{escape(west_name)}</div>
+                <div style="font-size:12px;color:#d4a574;">{escape(str(west_data.get('rank', '')))}</div>
+                <div style="font-size:20px;margin-top:4px;">{west_momentum.get('label', '➡️')}</div>
+                <div style="font-size:10px;color:#888;">{west_momentum.get('description', '')}</div>
+            </div>
+        </div>
+        
+        <!-- Stats comparison table -->
+        <div style="margin-top:20px;border-top:1px solid #333;padding-top:15px;">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <tr style="border-bottom:1px solid #333;">
+                    <td style="padding:8px;text-align:right;color:#f5ede0;font-weight:bold;">{east_record}</td>
+                    <td style="padding:8px;text-align:center;color:#888;width:100px;">Record</td>
+                    <td style="padding:8px;text-align:left;color:#f5ede0;font-weight:bold;">{west_record}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #333;">
+                    <td style="padding:8px;text-align:right;color:#f5ede0;">{east_height}</td>
+                    <td style="padding:8px;text-align:center;color:#888;">Height</td>
+                    <td style="padding:8px;text-align:left;color:#f5ede0;">{west_height}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #333;">
+                    <td style="padding:8px;text-align:right;color:#f5ede0;">{east_weight}</td>
+                    <td style="padding:8px;text-align:center;color:#888;">Weight</td>
+                    <td style="padding:8px;text-align:left;color:#f5ede0;">{west_weight}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #333;">
+                    <td style="padding:8px;text-align:right;color:#f5ede0;">{east_age}</td>
+                    <td style="padding:8px;text-align:center;color:#888;">Age</td>
+                    <td style="padding:8px;text-align:left;color:#f5ede0;">{west_age}</td>
+                </tr>
+                <tr>
+                    <td style="padding:8px;text-align:right;color:#f5ede0;">{east_momentum.get('streak', 0)} {east_momentum.get('streak_type', '') or ''}</td>
+                    <td style="padding:8px;text-align:center;color:#888;">Streak</td>
+                    <td style="padding:8px;text-align:left;color:#f5ede0;">{west_momentum.get('streak', 0)} {west_momentum.get('streak_type', '') or ''}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    '''
+    return html
+
+
+def render_upset_summary(upset_analysis: Dict[str, object]) -> None:
+    """Render the upset analysis summary in Streamlit."""
+    import streamlit.components.v1 as components
+    
+    upsets = upset_analysis.get("upsets", [])
+    giant_killers = upset_analysis.get("giant_killers", [])
+    vulnerable = upset_analysis.get("vulnerable", [])
+    
+    if not upsets:
+        st.info("No significant upsets recorded yet this tournament.")
+        return
+    
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Upsets", upset_analysis.get("total_upsets", 0))
+    with col2:
+        biggest = upset_analysis.get("biggest_upset")
+        if biggest:
+            st.metric("Biggest Upset", f"{biggest['winner']} def. {biggest['loser']}")
+    with col3:
+        if giant_killers:
+            top_killer = giant_killers[0]
+            st.metric("Top Giant Killer", f"{top_killer[0]} ({top_killer[1]})")
+    
+    # Giant Killers & Vulnerable sections
+    gk_col, vul_col = st.columns(2)
+    
+    with gk_col:
+        st.markdown("**🗡️ Giant Killers**")
+        if giant_killers:
+            for name, count in giant_killers:
+                st.caption(f"• {name}: {count} upset win{'s' if count > 1 else ''}")
+        else:
+            st.caption("None yet")
+    
+    with vul_col:
+        st.markdown("**🎯 Vulnerable Favorites**")
+        if vulnerable:
+            for name, count in vulnerable:
+                st.caption(f"• {name}: {count} upset loss{'es' if count > 1 else ''}")
+        else:
+            st.caption("None yet")
+    
+    # Recent upsets list
+    st.markdown("**📋 Upset Log**")
+    for upset in upsets[:10]:  # Show top 10
+        st.markdown(
+            f"{upset['label']} Day {upset['day']}: **{upset['winner']}** ({upset['winner_rank']}) "
+            f"def. {upset['loser']} ({upset['loser_rank']}) via {upset['kimarite'] or 'TBD'}"
+        )
+
+
+
+    """Generate HTML bubbles with tooltips for match results."""
+    
+    if not match_history:
+        return ""
+    
+    bubbles = []
+    for match_info in match_history:
+        is_win = match_info["is_win"]
+        opponent = escape(str(match_info["opponent"]))
+        day = match_info["day"]
+        result = match_info["result"]
+        
+        tooltip = escape(f"Day {day}: {result} vs {opponent}")
+        
+        if is_win:
+            # Filled green circle for win with tooltip
+            bubbles.append(
+                f'<span title="{tooltip}" style="cursor:pointer;color:#4CAF50;font-size:28px;">●</span>'
+            )
+        else:
+            # Empty circle for loss with tooltip
+            bubbles.append(
+                f'<span title="{tooltip}" style="cursor:pointer;color:#666;font-size:28px;">○</span>'
+            )
+    
+    return " ".join(bubbles)
+
+
 def scoreboard_dataframe(
     records: Dict[str, Dict[str, object]], 
     match_history: Dict[str, List[Dict[str, object]]] | None = None,
     limit: int | None = 15
 ) -> pd.DataFrame:
-    """Convert aggregated records into a dataframe."""
+    """Convert aggregated records into a dataframe with momentum indicators."""
 
     if not records:
         return pd.DataFrame()
@@ -520,19 +1152,36 @@ def scoreboard_dataframe(
     for name, payload in records.items():
         wins = int(payload["wins"])
         losses = int(payload["losses"])
+        rikishi_id = payload.get("id")
         
         # Get match history bubbles for this wrestler
         history = match_history.get(name, []) if match_history else []
         match_bubbles = generate_match_bubbles(history)
         
+        # Calculate momentum score
+        momentum = calculate_momentum_score(history, records)
+        
+        # Use real photo if we have an ID, fallback to avatar
+        if rikishi_id:
+            photo_url = build_rikishi_photo_url(int(rikishi_id))
+        else:
+            photo_url = build_rikishi_avatar_url(name)
+        
         rows.append(
             {
-                "Avatar": build_rikishi_avatar_url(name),
+                "Photo": photo_url,
+                "Avatar": build_rikishi_avatar_url(name),  # Fallback
+                "RikishiId": rikishi_id,
                 "Shikona": name,
                 "Rank": payload.get("rank") or "-",
                 "Wins": wins,
                 "Losses": losses,
                 "Matches": match_bubbles,
+                "Momentum": momentum["label"],
+                "MomentumScore": momentum["score"],
+                "MomentumDesc": momentum["description"],
+                "Streak": momentum["streak"],
+                "StreakType": momentum["streak_type"],
             }
         )
 
@@ -586,13 +1235,18 @@ def estimate_win_probability(
 
 
 def build_rikishi_avatar_url(name: str) -> str:
-    """Return a deterministic avatar URL for a given shikona."""
+    """Return a deterministic avatar URL for a given shikona (fallback)."""
 
     encoded = quote_plus(name)
     return (
         "https://ui-avatars.com/api/"
         f"?name={encoded}&background=EB3223&color=FFFFFF&size=64&rounded=true&bold=true"
     )
+
+
+def build_rikishi_photo_url(rikishi_id: int) -> str:
+    """Return the official photo URL from sumo-api for a rikishi."""
+    return f"https://www.sumo-api.com/images/rikishi/{rikishi_id}.jpg"
 
 
 def _division_from_rank(rank: str | None) -> str:
@@ -663,19 +1317,50 @@ def build_rikishi_dataframe(records: Sequence[Dict]) -> pd.DataFrame:
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
 def fetch_rikishi_directory(limit: int = 600, include_retired: bool = False) -> Dict:
-    """Load active rikishi records from the API."""
-
+    """Load rikishi records. Uses local cache when available."""
+    
+    # Determine cache file name
+    if include_retired:
+        cache_path = CACHE_DIR / "rikishi_directory_with_retired.json"
+    else:
+        cache_path = CACHE_DIR / "rikishi_directory.json"
+    
+    # Try cache first
+    cached_data = _load_from_cache(cache_path)
+    if cached_data:
+        return cached_data
+    
+    # Fetch from API
     params = {"limit": limit, "skip": 0, "ranks": "true"}
     if include_retired:
         params["intai"] = "true"
-    return _sumo_api_get("/rikishis", params=params)
+    data = _sumo_api_get("/rikishis", params=params)
+    
+    # Cache the result
+    if data:
+        _save_to_cache(cache_path, data)
+    
+    return data
 
 
 @st.cache_data(ttl=SUMO_API_CACHE_TTL)
 def fetch_rikishi_stats(rikishi_id: int) -> Dict:
-    """Fetch aggregated stats for a specific rikishi."""
-
-    return _sumo_api_get(f"/rikishi/{rikishi_id}/stats")
+    """Fetch aggregated stats for a specific rikishi. Uses local cache when available."""
+    cache_path = CACHE_DIR / f"rikishi_{rikishi_id}_stats.json"
+    
+    # Try cache first
+    cached_data = _load_from_cache(cache_path)
+    if cached_data:
+        return cached_data
+    
+    # Fetch from API
+    data = _sumo_api_get(f"/rikishi/{rikishi_id}/stats")
+    
+    # Cache the result
+    if data:
+        _save_to_cache(cache_path, data)
+    
+    return data
 
 
 def summarize_head_to_head(
@@ -790,32 +1475,368 @@ def save_daily_note(tournament_id: str, day: int, note: str) -> None:
 # ==================== Streamlit Layout ====================
 
 
+def get_next_tournament(tournaments: Sequence[Tournament]) -> Tournament | None:
+    """Find the next upcoming tournament."""
+    today = date.today()
+    for t in tournaments:
+        if t.start_date > today:
+            return t
+        if t.start_date <= today <= t.end_date:
+            return t  # Currently active
+    return None
+
+
+def get_tournament_status(tournament: Tournament) -> Dict[str, str]:
+    """Determine tournament status and styling."""
+    today = date.today()
+    if today < tournament.start_date:
+        days_until = (tournament.start_date - today).days
+        return {
+            "status": "upcoming",
+            "label": f"In {days_until} days",
+            "color": "#6c757d",
+            "bg": "rgba(108, 117, 125, 0.1)",
+            "border": "#6c757d",
+            "icon": "🔜"
+        }
+    elif today > tournament.end_date:
+        return {
+            "status": "completed",
+            "label": "Completed",
+            "color": "#28a745",
+            "bg": "rgba(40, 167, 69, 0.1)",
+            "border": "#28a745",
+            "icon": "✅"
+        }
+    else:
+        day_num = (today - tournament.start_date).days + 1
+        return {
+            "status": "live",
+            "label": f"Day {day_num} LIVE",
+            "color": "#c41e3a",
+            "bg": "rgba(196, 30, 58, 0.15)",
+            "border": "#c41e3a",
+            "icon": "🔴"
+        }
+
+
+def generate_ical_event(tournament: Tournament) -> str:
+    """Generate an iCal event string for a tournament."""
+    start_str = tournament.start_date.strftime("%Y%m%d")
+    end_str = tournament.end_date.strftime("%Y%m%d")
+    uid = f"{tournament.basho_id}@sumo-companion"
+    
+    return f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Sumo Companion//EN
+BEGIN:VEVENT
+UID:{uid}
+DTSTART;VALUE=DATE:{start_str}
+DTEND;VALUE=DATE:{end_str}
+SUMMARY:{tournament.name}
+DESCRIPTION:{tournament.highlight or 'Grand Sumo Tournament'}
+LOCATION:{tournament.venue}, {tournament.city}, Japan
+END:VEVENT
+END:VCALENDAR"""
+
+
+def render_countdown_banner(tournament: Tournament) -> None:
+    """Render a countdown banner for the next tournament."""
+    import streamlit.components.v1 as components
+    
+    today = date.today()
+    status = get_tournament_status(tournament)
+    
+    if status["status"] == "live":
+        day_num = (today - tournament.start_date).days + 1
+        days_remaining = 15 - day_num
+        countdown_html = f'''
+        <div style="text-align:center;">
+            <div style="font-size:14px;color:#d4a574;text-transform:uppercase;letter-spacing:2px;">Now Live</div>
+            <div style="font-size:48px;font-weight:bold;color:#f5ede0;margin:8px 0;">Day {day_num} of 15</div>
+            <div style="font-size:16px;color:#d4a574;">{days_remaining} days remaining</div>
+        </div>
+        '''
+    else:
+        days_until = (tournament.start_date - today).days
+        countdown_html = f'''
+        <div style="text-align:center;">
+            <div style="font-size:14px;color:#d4a574;text-transform:uppercase;letter-spacing:2px;">Next Tournament</div>
+            <div style="font-size:64px;font-weight:bold;color:#f5ede0;margin:8px 0;">{days_until}</div>
+            <div style="font-size:18px;color:#d4a574;">days until {escape(tournament.name)}</div>
+        </div>
+        '''
+    
+    banner_html = f'''
+    <div style="
+        background: linear-gradient(135deg, #2d1b1b 0%, #4a2c2c 50%, #1a1a2e 100%);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 2px solid #c41e3a;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    ">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;">
+            <div style="flex:1;min-width:200px;">
+                <div style="font-size:28px;font-weight:bold;color:#f5ede0;">🏯 {escape(tournament.name)}</div>
+                <div style="font-size:14px;color:#d4a574;margin-top:6px;">
+                    📍 {escape(tournament.city)} • {escape(tournament.venue)}
+                </div>
+                <div style="font-size:13px;color:#a0a0a0;margin-top:4px;">
+                    📅 {tournament.start_date.strftime('%B %d')} - {tournament.end_date.strftime('%B %d, %Y')}
+                </div>
+            </div>
+            <div style="flex:1;min-width:200px;">
+                {countdown_html}
+            </div>
+        </div>
+    </div>
+    '''
+    components.html(banner_html, height=160)
+
+
+def render_tournament_card(tournament: Tournament, champion_id: int | None = None) -> str:
+    """Generate HTML for a single tournament card."""
+    status = get_tournament_status(tournament)
+    
+    # Champion photo or placeholder
+    if champion_id:
+        champion_photo = build_rikishi_photo_url(champion_id)
+        champion_avatar = build_rikishi_avatar_url(tournament.champion or "TBD")
+    else:
+        champion_photo = build_rikishi_avatar_url(tournament.champion or "TBD")
+        champion_avatar = champion_photo
+    
+    champion_name = escape(tournament.champion or "TBD")
+    champion_section = f'''
+        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(212,165,116,0.3);">
+            <img src="{escape(champion_photo)}" 
+                 onerror="this.src='{escape(champion_avatar)}'"
+                 style="width:40px;height:40px;border-radius:50%;border:2px solid #c41e3a;object-fit:cover;">
+            <div>
+                <div style="font-size:10px;color:#888;text-transform:uppercase;">Champion</div>
+                <div style="font-size:14px;font-weight:bold;color:#2d1b1b;">{champion_name}</div>
+            </div>
+        </div>
+    ''' if status["status"] == "completed" else '''
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(212,165,116,0.3);">
+            <div style="font-size:11px;color:#888;font-style:italic;">Champion to be determined</div>
+        </div>
+    '''
+    
+    # City emoji mapping
+    city_emoji = {
+        "Tokyo": "🗼",
+        "Osaka": "🏯",
+        "Nagoya": "🌸",
+        "Fukuoka": "🌊"
+    }.get(tournament.city, "📍")
+    
+    return f'''
+    <div style="
+        background: {status['bg']};
+        border: 2px solid {status['border']};
+        border-radius: 12px;
+        padding: 16px;
+        height: 100%;
+        box-sizing: border-box;
+        transition: transform 0.2s, box-shadow 0.2s;
+    ">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div style="font-size:18px;font-weight:bold;color:#2d1b1b;">{escape(tournament.name)}</div>
+            <div style="
+                background:{status['color']};
+                color:white;
+                padding:3px 8px;
+                border-radius:10px;
+                font-size:10px;
+                font-weight:bold;
+            ">{status['icon']} {status['label']}</div>
+        </div>
+        
+        <div style="margin-top:10px;font-size:13px;color:#555;">
+            <div>{city_emoji} {escape(tournament.city)}</div>
+            <div style="margin-top:4px;color:#777;font-size:12px;">{escape(tournament.venue)}</div>
+        </div>
+        
+        <div style="margin-top:10px;font-size:12px;color:#666;">
+            📅 {tournament.start_date.strftime('%b %d')} - {tournament.end_date.strftime('%b %d')}
+        </div>
+        
+        {champion_section}
+    </div>
+    '''
+
+
+@st.cache_data(ttl=SUMO_API_CACHE_TTL)
+def fetch_champion_ids(champion_names: List[str]) -> Dict[str, int]:
+    """Look up rikishi IDs for champion names."""
+    try:
+        directory = fetch_rikishi_directory(limit=800, include_retired=True)
+        records = directory.get("records") or []
+        name_to_id = {}
+        for record in records:
+            shikona = record.get("shikonaEn")
+            if shikona and shikona in champion_names:
+                name_to_id[shikona] = record.get("id")
+        return name_to_id
+    except Exception:
+        return {}
+
+
 def render_calendar_tab(tournaments: Sequence[Tournament]) -> None:
-    """Render the full honbasho calendar and champion history."""
-
-    st.subheader("Tournament Calendar")
-    df = tournaments_dataframe(tournaments)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-    chart = (
-        alt.Chart(df)
-        .mark_bar()
-        .encode(
-            y=alt.Y("Tournament", sort=None),
-            x=alt.X("Start", title="Date"),
-            x2="End",
-            color=alt.Color("City", legend=alt.Legend(title="Host City")),
-            tooltip=["Tournament", "City", "Champion", "Start", "End", "Highlight"],
+    """Render the redesigned honbasho calendar with cards, countdown, and champion showcase."""
+    import streamlit.components.v1 as components
+    
+    st.subheader("🗓️ Tournament Calendar")
+    
+    # === COUNTDOWN BANNER ===
+    next_tournament = get_next_tournament(tournaments)
+    if next_tournament:
+        render_countdown_banner(next_tournament)
+    
+    # === TOURNAMENT CARDS GRID ===
+    st.markdown("### All Tournaments")
+    
+    # Fetch champion IDs for photos
+    champion_names = [t.champion for t in tournaments if t.champion]
+    champion_ids = fetch_champion_ids(champion_names)
+    
+    # Create 3-column grid
+    cards_html = ""
+    for i, tournament in enumerate(tournaments):
+        champion_id = champion_ids.get(tournament.champion) if tournament.champion else None
+        card_html = render_tournament_card(tournament, champion_id)
+        cards_html += f'<div style="flex:1;min-width:280px;max-width:400px;">{card_html}</div>'
+    
+    grid_html = f'''
+    <div style="
+        display:flex;
+        flex-wrap:wrap;
+        gap:16px;
+        justify-content:center;
+    ">
+        {cards_html}
+    </div>
+    '''
+    components.html(grid_html, height=520, scrolling=True)
+    
+    # === CHAMPION SHOWCASE ===
+    st.markdown("### 🏆 Champion Showcase")
+    
+    completed_tournaments = [t for t in tournaments if get_tournament_status(t)["status"] == "completed"]
+    
+    if completed_tournaments:
+        showcase_html = ""
+        for tournament in completed_tournaments:
+            if not tournament.champion:
+                continue
+            champion_id = champion_ids.get(tournament.champion)
+            if champion_id:
+                photo_url = build_rikishi_photo_url(champion_id)
+            else:
+                photo_url = build_rikishi_avatar_url(tournament.champion)
+            avatar_url = build_rikishi_avatar_url(tournament.champion)
+            
+            showcase_html += f'''
+            <div style="
+                text-align:center;
+                padding:16px;
+                background:rgba(255,255,255,0.9);
+                border-radius:12px;
+                border:1px solid #d4a574;
+                min-width:140px;
+            ">
+                <img src="{escape(photo_url)}" 
+                     onerror="this.src='{escape(avatar_url)}'"
+                     style="width:80px;height:80px;border-radius:50%;border:3px solid #c41e3a;object-fit:cover;margin-bottom:8px;">
+                <div style="font-size:16px;font-weight:bold;color:#2d1b1b;">{escape(tournament.champion)}</div>
+                <div style="font-size:12px;color:#666;margin-top:4px;">{escape(tournament.name)}</div>
+                <div style="font-size:11px;color:#888;">{tournament.month}</div>
+            </div>
+            '''
+        
+        if showcase_html:
+            components.html(f'''
+            <div style="
+                display:flex;
+                flex-wrap:wrap;
+                gap:16px;
+                justify-content:center;
+                padding:10px 0;
+            ">
+                {showcase_html}
+            </div>
+            ''', height=200)
+    else:
+        st.info("No completed tournaments yet this season.")
+    
+    # === CALENDAR EXPORT ===
+    st.markdown("### 📥 Export to Calendar")
+    
+    export_cols = st.columns([2, 1, 1])
+    with export_cols[0]:
+        export_choice = st.selectbox(
+            "Choose tournament to export",
+            ["All tournaments"] + [t.name for t in tournaments],
+            key="calendar_export_choice"
         )
-        .properties(height=300)
-    )
-    st.altair_chart(chart, use_container_width=True)
-
-    with st.expander("Champion storyline"):
-        for _, row in df.iterrows():
-            st.markdown(
-                f"**{row['Tournament']}** - {row['Champion']} ( {row['Highlight'] or 'Season staple'} )"
+    
+    with export_cols[1]:
+        if st.button("📅 Download .ics", use_container_width=True):
+            if export_choice == "All tournaments":
+                # Combine all tournaments into one ical
+                events = ""
+                for t in tournaments:
+                    start_str = t.start_date.strftime("%Y%m%d")
+                    end_str = t.end_date.strftime("%Y%m%d")
+                    uid = f"{t.basho_id}@sumo-companion"
+                    events += f"""BEGIN:VEVENT
+UID:{uid}
+DTSTART;VALUE=DATE:{start_str}
+DTEND;VALUE=DATE:{end_str}
+SUMMARY:{t.name}
+DESCRIPTION:{t.highlight or 'Grand Sumo Tournament'}
+LOCATION:{t.venue}, {t.city}, Japan
+END:VEVENT
+"""
+                ical_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Sumo Companion//EN
+{events}END:VCALENDAR"""
+                filename = f"sumo_calendar_{tournaments[0].start_date.year}.ics"
+            else:
+                selected = next(t for t in tournaments if t.name == export_choice)
+                ical_content = generate_ical_event(selected)
+                filename = f"{selected.basho_id}_{selected.name.replace(' ', '_')}.ics"
+            
+            st.download_button(
+                label="⬇️ Save File",
+                data=ical_content,
+                file_name=filename,
+                mime="text/calendar",
+                key="ics_download"
             )
+    
+    with export_cols[2]:
+        st.caption("Import into Google Calendar, Outlook, or Apple Calendar")
+    
+    # === SEASON OVERVIEW (collapsible) ===
+    with st.expander("📊 Season Overview & Storylines"):
+        for tournament in tournaments:
+            status = get_tournament_status(tournament)
+            status_badge = f'<span style="background:{status["color"]};color:white;padding:2px 6px;border-radius:8px;font-size:10px;">{status["label"]}</span>'
+            
+            highlight = tournament.highlight or "A key stop on the grand sumo circuit."
+            champion_text = f"**Champion:** {tournament.champion}" if tournament.champion else "*Champion TBD*"
+            
+            st.markdown(
+                f"**{tournament.name}** ({tournament.city}) {status_badge}",
+                unsafe_allow_html=True
+            )
+            st.caption(f"{highlight}")
+            st.caption(champion_text)
+            st.markdown("---")
 
 
 def render_rikishi_tab() -> None:
@@ -1002,6 +2023,108 @@ def render_rikishi_tab() -> None:
         st.info("You have not saved any favorites yet.")
 
 
+def render_tournament_banner(
+    tournament: Tournament,
+    latest_day: int,
+    records: Dict[str, Dict[str, object]]
+) -> None:
+    """Render a live tournament progress banner with yusho race leaders."""
+    
+    days_remaining = 15 - latest_day
+    
+    # Get top 5 leaders by wins
+    leaders = sorted(
+        [(name, data) for name, data in records.items()],
+        key=lambda x: (int(x[1].get("wins", 0)), -int(x[1].get("losses", 0))),
+        reverse=True
+    )[:5]
+    
+    # Determine tournament status
+    today = date.today()
+    if today < tournament.start_date:
+        status = "🔜 Upcoming"
+        status_color = "#6c757d"
+    elif today > tournament.end_date:
+        status = "✅ Completed"
+        status_color = "#28a745"
+    else:
+        status = "🔴 LIVE"
+        status_color = "#c41e3a"
+    
+    # Build leader photos HTML
+    leader_html_parts = []
+    for name, data in leaders:
+        wins = int(data.get("wins", 0))
+        losses = int(data.get("losses", 0))
+        # Try to get rikishi ID from records if available
+        rikishi_id = data.get("id")
+        if rikishi_id:
+            photo_url = build_rikishi_photo_url(int(rikishi_id))
+        else:
+            photo_url = build_rikishi_avatar_url(name)
+        
+        leader_html_parts.append(f'''
+            <div style="text-align:center;margin:0 8px;">
+                <img src="{escape(photo_url)}" 
+                     onerror="this.src='{escape(build_rikishi_avatar_url(name))}'"
+                     style="width:50px;height:50px;border-radius:50%;border:2px solid #c41e3a;object-fit:cover;">
+                <div style="font-size:11px;font-weight:bold;color:#2d1b1b;margin-top:4px;">{escape(name)}</div>
+                <div style="font-size:10px;color:#666;">{wins}-{losses}</div>
+            </div>
+        ''')
+    
+    leaders_html = "".join(leader_html_parts) if leader_html_parts else "<span style='color:#666;'>No results yet</span>"
+    
+    banner_html = f'''
+    <div style="
+        background: linear-gradient(135deg, #2d1b1b 0%, #4a2c2c 50%, #1a1a2e 100%);
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        border: 2px solid #c41e3a;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    ">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <!-- Tournament Info -->
+            <div style="flex:1;min-width:200px;">
+                <div style="font-size:22px;font-weight:bold;color:#f5ede0;">🏯 {escape(tournament.name)}</div>
+                <div style="font-size:13px;color:#d4a574;margin-top:4px;">
+                    {escape(tournament.city)} • {escape(tournament.venue)}
+                </div>
+            </div>
+            
+            <!-- Status & Day -->
+            <div style="text-align:center;">
+                <div style="
+                    background:{status_color};
+                    color:white;
+                    padding:4px 12px;
+                    border-radius:12px;
+                    font-size:12px;
+                    font-weight:bold;
+                    display:inline-block;
+                ">{status}</div>
+                <div style="font-size:28px;font-weight:bold;color:#f5ede0;margin-top:4px;">Day {latest_day}/15</div>
+                <div style="font-size:11px;color:#d4a574;">{days_remaining} days remaining</div>
+            </div>
+            
+            <!-- Yusho Race Leaders -->
+            <div style="flex:1;min-width:280px;">
+                <div style="font-size:11px;color:#d4a574;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+                    🏆 Yusho Race Leaders
+                </div>
+                <div style="display:flex;justify-content:flex-end;align-items:flex-start;">
+                    {leaders_html}
+                </div>
+            </div>
+        </div>
+    </div>
+    '''
+    
+    import streamlit.components.v1 as components
+    components.html(banner_html, height=140)
+
+
 def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
     """Daily picks and journaling for the active basho."""
 
@@ -1024,6 +2147,10 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
         update_head_to_head_from_matches(all_matches)
     scoreboard_records = compute_rikishi_records(completed_days)
     match_history = build_match_history(completed_days)
+    
+    # === LIVE TOURNAMENT PROGRESS BANNER ===
+    render_tournament_banner(chosen, latest_completed_day, scoreboard_records)
+    
     scoreboard = scoreboard_dataframe(scoreboard_records, match_history=match_history, limit=15)
     if not scoreboard.empty:
         st.markdown("### Scoreboard (Top Performers)")
@@ -1032,31 +2159,36 @@ def render_tracker_tab(tournaments: Sequence[Tournament]) -> None:
         html_rows = []
         for _, row in scoreboard.iterrows():
             matches_html = row["Matches"]
+            photo_url = escape(str(row['Photo']))
             avatar_url = escape(str(row['Avatar']))
             shikona = escape(str(row['Shikona']))
             rank = escape(str(row['Rank']))
+            momentum = row.get("Momentum", "➡️")
+            momentum_desc = escape(str(row.get("MomentumDesc", "")))
             html_rows.append(
                 f'<tr>'
-                f'<td style="padding:8px;"><img src="{avatar_url}" width="40" height="40" style="border-radius:50%;"></td>'
+                f'<td style="padding:8px;"><img src="{photo_url}" onerror="this.src=\'{avatar_url}\'" width="50" height="50" style="border-radius:50%;object-fit:cover;border:2px solid #c41e3a;"></td>'
                 f'<td style="padding:8px;"><strong>{shikona}</strong></td>'
                 f'<td style="padding:8px;">{rank}</td>'
                 f'<td style="padding:8px;text-align:center;">{row["Wins"]}</td>'
                 f'<td style="padding:8px;text-align:center;">{row["Losses"]}</td>'
+                f'<td style="padding:8px;text-align:center;" title="{momentum_desc}">{momentum}</td>'
                 f'<td style="padding:8px;">{matches_html}</td>'
                 f'</tr>'
             )
         
         html_table = (
             '<div style="overflow-x:auto;">'
-            '<table style="width:100%;border-collapse:collapse;border:1px solid #ddd;">'
+            '<table style="width:100%;border-collapse:collapse;border:1px solid #d4a574;background:rgba(255,255,255,0.9);">'
             '<thead>'
-            '<tr style="background-color:#f0f0f0;border-bottom:2px solid #ddd;">'
-            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Avatar</th>'
-            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Shikona</th>'
-            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Rank</th>'
-            '<th style="padding:8px;text-align:center;border:1px solid #ddd;">Wins</th>'
-            '<th style="padding:8px;text-align:center;border:1px solid #ddd;">Losses</th>'
-            '<th style="padding:8px;text-align:left;border:1px solid #ddd;">Match Results</th>'
+            '<tr style="background:linear-gradient(135deg,#2d1b1b,#4a2c2c);color:#f5ede0;">'
+            '<th style="padding:10px;text-align:left;">Photo</th>'
+            '<th style="padding:10px;text-align:left;">Shikona</th>'
+            '<th style="padding:10px;text-align:left;">Rank</th>'
+            '<th style="padding:10px;text-align:center;">Wins</th>'
+            '<th style="padding:10px;text-align:center;">Losses</th>'
+            '<th style="padding:10px;text-align:center;">Form</th>'
+            '<th style="padding:10px;text-align:left;">Match Results</th>'
             '</tr>'
             '</thead>'
             '<tbody>'
@@ -1331,13 +2463,81 @@ def render_learning_tab() -> None:
 def main() -> None:
     """Bootstraps Streamlit tabs for the Sumo companion app."""
 
-    st.set_page_config(page_title="Sumo Tournament Companion", page_icon="S", layout="wide")
+    st.set_page_config(page_title="Sumo Tournament Companion", page_icon="🏯", layout="wide")
     init_session_state()
+
+    # Japanese-themed CSS: cream/paper background with subtle seigaiha wave pattern
+    st.markdown("""
+    <style>
+    /* Main app background - cream paper with subtle wave pattern */
+    .stApp {
+        background: 
+            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='50' viewBox='0 0 100 50'%3E%3Cpath d='M0 25 Q25 0 50 25 T100 25' fill='none' stroke='%23d4a574' stroke-width='0.5' opacity='0.3'/%3E%3Cpath d='M0 35 Q25 10 50 35 T100 35' fill='none' stroke='%23d4a574' stroke-width='0.5' opacity='0.2'/%3E%3Cpath d='M0 45 Q25 20 50 45 T100 45' fill='none' stroke='%23d4a574' stroke-width='0.5' opacity='0.15'/%3E%3C/svg%3E"),
+            linear-gradient(135deg, #faf6f0 0%, #f5ede0 50%, #faf6f0 100%);
+        background-size: 100px 50px, cover;
+    }
+    
+    /* Sidebar styling - darker traditional feel */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #2d1b1b 0%, #1a1a2e 100%);
+    }
+    
+    /* Header area accent */
+    header[data-testid="stHeader"] {
+        background: rgba(250, 246, 240, 0.95);
+        border-bottom: 2px solid #c41e3a;
+    }
+    
+    /* Cards and containers - subtle paper texture effect */
+    [data-testid="stExpander"], .stDataFrame, [data-testid="metric-container"] {
+        background: rgba(255, 255, 255, 0.85) !important;
+        border: 1px solid #d4a574 !important;
+        border-radius: 4px;
+    }
+    
+    /* Tab styling with traditional red accent */
+    .stTabs [data-baseweb="tab-list"] {
+        border-bottom: 2px solid #c41e3a;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: #2d1b1b;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: #c41e3a !important;
+        color: white !important;
+        border-radius: 4px 4px 0 0;
+    }
+    
+    /* Button accents */
+    .stButton > button {
+        background: linear-gradient(180deg, #c41e3a 0%, #8b0000 100%);
+        color: white;
+        border: none;
+    }
+    
+    .stButton > button:hover {
+        background: linear-gradient(180deg, #d4342e 0%, #a00000 100%);
+    }
+    
+    /* Slider and select styling */
+    .stSlider > div > div > div {
+        background: #c41e3a !important;
+    }
+    
+    /* Title styling */
+    h1 {
+        color: #2d1b1b !important;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     st.title("Sumo Tournament Companion")
     st.caption("Plan each honbasho, spotlight your favorite rikishi, and log bout picks.")
 
-    year = st.select_slider("Season", options=[2024, 2025, 2026], value=2025)
+    year = st.radio("Season", options=[2024, 2025, 2026], index=1, horizontal=True)
     tournaments = assemble_tournaments(year)
 
     tabs = st.tabs(["Daily Tracker", "Calendar", "Banzuke", "Learn"], default="Daily Tracker")
