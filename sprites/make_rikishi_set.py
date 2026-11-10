@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 W, H = 56, 62
 OX = 4                      # design coords are on a 48-wide grid, centre 23.5
+OY = 0                      # vertical shift applied by px (used by the walk cycle)
 CX = 23.5 + OX
 OUT = Path(__file__).parent / "concepts" / "rikishi_set"
 LIGHT = np.array([-0.45, -0.7, 0.55])
@@ -107,7 +108,7 @@ def px(img, pts, color):
     c = hexc(color) if isinstance(color, str) else tuple(color)
     for x, y in pts:
         x = int(x) + OX
-        y = int(y)
+        y = int(y) + OY
         if 0 <= x < W and 0 <= y < H:
             img[y, x] = c
 
