@@ -199,9 +199,12 @@ def build():
         frames[k] = POSES[k]
     for k in ("shift", "raise", "peak"):
         frames[k + "_r"] = flip_pose(POSES[k])
+    import make_shiko_mockups as mk  # chosen leg-raise pose (R1 Textbook)
+    textbook = mk.textbook_frames()
     rgba, idx = {}, {}
     for k in ORDER:
-        r, i = wc.quantize(render(frames[k]))
+        src = textbook[k] if k in textbook else render(frames[k])
+        r, i = wc.quantize(src)
         rgba[k], idx[k] = r, i
     return rgba, idx
 

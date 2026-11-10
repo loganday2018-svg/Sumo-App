@@ -40,6 +40,15 @@ def along(pt, ang, length):
 
 def joints(p):
     """Resolve a pose into absolute joint positions (offsets from centre)."""
+    if p.get("mirror"):
+        q = dict(p, mirror=False, tilt=-p["tilt"], torso=(-p["torso"][0], p["torso"][1]))
+        j = joints(q)
+        flip = lambda pt: (-pt[0], pt[1])
+        out = {}
+        for k, v in j.items():
+            k2 = k[:-1] + {"L": "R", "R": "L"}[k[-1]] if k[-1] in "LR" else k
+            out[k2] = flip(v)
+        return out
     if p.get("squat"):
         hipL, kneeL, footL = (-9, 46), (-23, 49), (-22, 59)
         hipR = (9, 46)
@@ -96,7 +105,7 @@ def render(p, j=None):
     # legs (behind the body)
     for leg, (hip, knee, foot) in (("legL", (j["hipL"], j["kneeL"], j["footL"])),
                                    ("legR", (j["hipR"], j["kneeR"], j["footR"]))):
-        raised = leg == "legL" and foot[1] < 55
+        raised = foot[1] < 55
         z = 3.5 if raised else 1
         ms.limb(s, hip, knee, 7.6 if raised else 6.6, SK, z, leg)
         ms.limb(s, knee, foot, 6.3 if raised else 5.6, SK, z + 0.1, leg)
@@ -202,6 +211,34 @@ VARIANTS = [
 
 STOMP = dict(READY, torso=(0, 39), trx=18.5, try_=13, kneeR=(25, 50), footR=(24, 59), a1=-10, a2=-92,
              mouth="shout", eyes="glare")
+
+
+def mirror_pose(p):
+    """Same pose with the other leg raised. Joints are mirrored, but the sprite
+    is redrawn so lighting and the topknot stay consistent."""
+    return dict(p, mirror=True, tilt=-p["tilt"], torso=(-p["torso"][0], p["torso"][1]))
+
+
+def textbook_frames():
+    """Shift / raise / peak for both legs using the chosen R1 Textbook pose."""
+    peak = dict(next(v for v in VARIANTS_V2 if v[0] == "R1")[3])
+    shift_src = dict(peak, a1=-5, a2=-75)
+    shift = lerp_pose(READY, shift_src, 0.45)
+    shift.pop("straight", None); shift.pop("squat", None)
+    shift["mouth"], shift["eyes"] = "flat", "glare"
+    raise_ = lerp_pose(READY, peak, 0.72)
+    raise_.pop("squat", None)
+    raise_["handL"], raise_["handR"] = peak["handL"], peak["handR"]
+    out = {}
+    for suffix, fn in (("", lambda p: p), ("_r", mirror_pose)):
+        for name, pose in (("shift", shift), ("raise", raise_), ("peak", peak)):
+            q = fn(dict(pose))
+            j = joints(q)
+            if name == "shift":
+                fk = "footL" if suffix == "" else "footR"
+                j[fk] = (j[fk][0], min(j[fk][1], 57))
+            out[name + suffix] = render(q, j)
+    return out
 
 
 def frames_for(peak):
