@@ -48,6 +48,9 @@ def joints(p):
         kneeL = along(hipL, p["a1"], THIGH)
         footL = along(kneeL, p["a2"], SHIN)
     kneeR, footR = p["kneeR"], p["footR"]
+    if p.get("straight"):
+        # standing leg locks: knee sits on the hip-foot line, a hair outward
+        kneeR = ((hipR[0] + footR[0]) / 2 + 1.5, (hipR[1] + footR[1]) / 2)
     shL, shR = T(p, -13, -9), T(p, 13, -9)
     hands = {}
     for side, mode in (("L", p["handL"]), ("R", p["handR"])):
@@ -203,6 +206,7 @@ STOMP = dict(READY, torso=(0, 39), trx=18.5, try_=13, kneeR=(25, 50), footR=(24,
 
 def frames_for(peak):
     shift = lerp_pose(READY, dict(peak, a1=-5, a2=-75), 0.45)
+    shift.pop("straight", None)
     shift["mouth"], shift["eyes"] = "flat", "glare"
     raise_ = lerp_pose(READY, peak, 0.72)
     raise_["handL"], raise_["handR"] = peak["handL"], peak["handR"]
@@ -224,10 +228,31 @@ def up(a, k):
     return im.resize((im.width * k, im.height * k), Image.NEAREST)
 
 
+VARIANTS_V2 = [
+    ("R1", "Textbook", "Standing leg locks straight, raised leg straight at 50°, hand on the raised knee.",
+     dict(straight=True, tilt=28, torso=(11, 30), trx=17, try_=14.5, a1=48, a2=50, kneeR=(24, 50), footR=(22, 59),
+          handL="knee", handR="thigh", mouth="grit", eyes="glare")),
+    ("R2", "Yokozuna High", "Deepest lean with the leg near vertical, like the top champions.",
+     dict(straight=True, tilt=36, torso=(13, 31), trx=17, try_=14.5, a1=62, a2=66, kneeR=(24, 50), footR=(22, 59),
+          handL="thigh", handR="thigh", mouth="grit", eyes="glare")),
+    ("R3", "Steady", "Gentler 20° lean, leg straight out at shoulder height.",
+     dict(straight=True, tilt=20, torso=(9, 31), trx=17, try_=14.5, a1=34, a2=36, kneeR=(24, 50), footR=(22, 59),
+          handL="knee", handR="thigh", mouth="grit", eyes="glare")),
+    ("R4", "Power Fist", "Textbook lean and leg, with the free fist punched up for a charge-up feel.",
+     dict(straight=True, tilt=28, torso=(11, 30), trx=17, try_=14.5, a1=48, a2=50, kneeR=(24, 50), footR=(22, 59),
+          handL="up", handR="thigh", mouth="grit", eyes="glare")),
+]
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    build_set(VARIANTS, "leg_raise_mockups", "LEG RAISE MOCK-UPS - pick a letter")
+    build_set(VARIANTS_V2, "leg_raise_mockups_v2", "LEG RAISE v2 - straight standing leg, straight kick")
+
+
+def build_set(variants, stem, heading):
     all_frames = []
-    for code, name, blurb, peak in VARIANTS:
+    for code, name, blurb, peak in variants:
         fr = frames_for(peak)
         all_frames.append((code, name, blurb, fr))
         Image.fromarray(fr["peak"], "RGBA").save(OUT / f"peak_{code}.png")
@@ -239,9 +264,9 @@ def main():
     # sheet: big peak pose + small shift/raise strip per variant
     k = 3
     cw, chh = FW * k + 30, FH * k + 200
-    sheet = Image.new("RGBA", (cw * 5 + 30, chh + 80), (24, 26, 44, 255))
+    sheet = Image.new("RGBA", (cw * len(all_frames) + 30, chh + 80), (24, 26, 44, 255))
     dr = ImageDraw.Draw(sheet)
-    dr.text((24, 20), "LEG RAISE MOCK-UPS - pick a letter", font=f_h, fill=(255, 226, 120, 255))
+    dr.text((24, 20), heading, font=f_h, fill=(255, 226, 120, 255))
     for i, (code, name, blurb, fr) in enumerate(all_frames):
         x0, y0 = 15 + i * cw, 70
         dr.rounded_rectangle([x0, y0, x0 + cw - 12, y0 + chh - 10], 12, fill=(36, 40, 66, 255))
@@ -258,7 +283,7 @@ def main():
         lines.append(line)
         for li, ln in enumerate(lines[:3]):
             dr.text((x0 + 12, y0 + FH * k + 114 + li * 20), ln, font=f_s, fill=(190, 196, 220, 255))
-    sheet.save(OUT / "leg_raise_mockups.png")
+    sheet.save(OUT / f"{stem}.png")
 
     # animated comparison, all five in sync
     seq = [("ready", 20), ("shift", 8), ("raise", 8), ("peak", 34), ("stomp", 8), ("ready", 14)]
@@ -267,7 +292,7 @@ def main():
     bg = (196, 160, 110)
     for key, ticks in seq:
         for t in range(0, ticks, 2):
-            im = Image.new("RGBA", (5 * FW * k + 60, FH * k + 50), (*bg, 255))
+            im = Image.new("RGBA", (len(all_frames) * (FW * k + 10) + 10, FH * k + 50), (*bg, 255))
             d2 = ImageDraw.Draw(im)
             for i, (code, name, _, fr) in enumerate(all_frames):
                 x0 = 10 + i * (FW * k + 10)
@@ -278,7 +303,7 @@ def main():
                 im.alpha_composite(up(fr[key], k), (x0, 6 + shake))
                 d2.text((x0 + 10, FH * k + 14), f"{code}. {name}", font=f_t, fill=(40, 24, 10, 255))
             gif.append(im.convert("RGB"))
-    gif[0].save(OUT / "leg_raise_mockups.gif", save_all=True, append_images=gif[1:], duration=33, loop=0)
+    gif[0].save(OUT / f"{stem}.gif", save_all=True, append_images=gif[1:], duration=33, loop=0)
 
 
 if __name__ == "__main__":
