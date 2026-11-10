@@ -284,6 +284,12 @@ def build_set(variants, stem, heading):
         for li, ln in enumerate(lines[:3]):
             dr.text((x0 + 12, y0 + FH * k + 114 + li * 20), ln, font=f_s, fill=(190, 196, 220, 255))
     sheet.save(OUT / f"{stem}.png")
+    # raw frame strip for the web preview: one row per variant, columns ready/shift/raise/peak/stomp
+    strip = np.zeros((FH * len(all_frames), FW * 5, 4), dtype=np.uint8)
+    for r, (_, _, _, fr) in enumerate(all_frames):
+        for c, key in enumerate(("ready", "shift", "raise", "peak", "stomp")):
+            strip[r * FH:(r + 1) * FH, c * FW:(c + 1) * FW] = fr[key]
+    Image.fromarray(strip, "RGBA").save(OUT / f"{stem}_frames.png")
 
     # animated comparison, all five in sync
     seq = [("ready", 20), ("shift", 8), ("raise", 8), ("peak", 34), ("stomp", 8), ("ready", 14)]
