@@ -124,11 +124,18 @@ def render(p, j=None):
     dx, dy = rs.XX + 0.5 - (CX + tx), rs.YY + 0.5 - ty
     u = dx * math.cos(t) + dy * math.sin(t)
     v = -dx * math.sin(t) + dy * math.cos(t)
-    big, bn = ell(CX + tx, ty, p["trx"] + 1, p["try_"] + 1, rot=t)
+    big, _ = ell(CX + tx, ty, p["trx"] + 1, p["try_"] + 1, rot=t)
+    # cylinder shading around the tilted body axis (keeps the silk purple, not navy)
+    cu = np.clip(u / (p["trx"] + 1), -1, 1)
+    bn = np.stack([cu * math.cos(t), cu * math.sin(t) - 0.15, np.sqrt(1 - cu * cu) + 0.2], axis=-1)
+    bn /= np.linalg.norm(bn, axis=-1, keepdims=True)
     band = big & (v >= 6) & (v <= 11)
     s.add(band, bn, MW, 3, hard=False, group="mawashi")
+    fu = np.clip(u / 5, -1, 1)
+    fn = np.stack([fu * math.cos(t), fu * math.sin(t) - 0.15, np.sqrt(1 - fu * fu) + 0.2], axis=-1)
+    fn /= np.linalg.norm(fn, axis=-1, keepdims=True)
     front = (np.abs(u) <= 3.5) & (v >= 11) & (v <= 16)
-    s.add(front, bn, MW, 3, hard=False, group="mawashi")
+    s.add(front, fn, MW, 3, hard=False, group="mawashi")
     # arms
     for side in ("L", "R"):
         ms.limb(s, j["sh" + side], j["hand" + side], 5.4, SK, 4, "arm" + side)
