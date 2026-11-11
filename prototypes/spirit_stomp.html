@@ -31,6 +31,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .soundbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; font-size: 13px; color: var(--muted); }
 .soundbar button { font: 600 13px var(--body); background: var(--btn); color: var(--fg); border: 2px solid var(--edge); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
 .soundbar button[aria-pressed="true"] { background: var(--accent); color: var(--btn); border-color: var(--accent); }
+.sndstatus { font-size: 12px; color: var(--muted); }
+.sndstatus.ready { color: #9dffb8; }
 .soundbar input { width: min(220px, 50vw); accent-color: var(--accent); }
 .tune { background: var(--shell); border: 2px solid var(--edge); border-radius: 14px; padding: 16px; display: grid; gap: 12px; }
 .tune-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
@@ -52,12 +54,13 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
 
 <main>
   <h1>SPIRIT STOMP</h1>
-  <p class="lede">Shiko drives evil spirits out of the ring. Raise the leg to charge a bigger shockwave, chase the balance target while it.s up, and stomp before the wisps reach you.</p>
+  <p class="lede">Shiko drives evil spirits out of the ring. Raise the leg to charge a bigger shockwave, chase the balance target while it's up, and stomp before the wisps reach you.</p>
 
   <div class="soundbar" role="group" aria-label="Sound">
     <button type="button" id="sndBtn" aria-pressed="true">Sound on</button>
     <label for="sndVol">Volume</label>
     <input type="range" id="sndVol" min="0" max="1" step="0.05">
+    <span id="sndStatus" class="sndstatus" aria-live="polite"></span>
   </div>
 
   <section class="shell" aria-label="Game">
@@ -153,19 +156,38 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     let on = true, vol = 0.6;
     try { const v = JSON.parse(localStorage.getItem("spiritStompSound") || "null"); if (v) { on = v.on; vol = v.vol; } } catch (e) {}
     const save = () => { try { localStorage.setItem("spiritStompSound", JSON.stringify({ on, vol })); } catch (e) {} };
+    // iPhones mute web audio when the ringer switch is off unless the page asks for "playback" audio.
+    let sessionSet = false, silentEl = null;
+    function playbackSession() {
+      if (sessionSet) return; sessionSet = true;
+      try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+      try {   // older iOS: a looping silent <audio> element switches the session to playback
+        silentEl = new Audio("data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==");
+        silentEl.loop = true; silentEl.volume = 0.01; silentEl.setAttribute("playsinline", "");
+        const pr = silentEl.play(); if (pr && pr.catch) pr.catch(() => {});
+      } catch (e) {}
+    }
     function ensure() {
       if (!AC) return false;
+      playbackSession();
       if (!ctx) {
         ctx = new AC();
         master = ctx.createGain(); master.gain.value = on ? vol : 0; master.connect(ctx.destination);
         noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
         const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
       }
-      if (ctx.state === "suspended") ctx.resume();
+      if (ctx.state !== "running") {
+        const pr = ctx.resume(); if (pr && pr.then) pr.then(status, status);
+        // some phones also need a sound started inside the tap itself
+        const b = ctx.createBufferSource(); b.buffer = ctx.createBuffer(1, 1, 22050); b.connect(ctx.destination); b.start(0);
+      }
+      status();
       return true;
     }
-    // browsers only allow audio after the first tap or key press
-    ["pointerdown", "keydown"].forEach(t => addEventListener(t, ensure, { capture: true }));
+    // browsers only allow audio after a tap or key press; different phones count different events
+    ["pointerdown", "pointerup", "touchstart", "touchend", "click", "keydown"].forEach(t => addEventListener(t, ensure, { capture: true, passive: true }));
+    let onStatus = () => {};
+    function status() { onStatus(!AC ? "unsupported" : !ctx || ctx.state !== "running" ? "locked" : on ? "playing" : "muted"); }
     const live = () => ctx && on && ctx.state === "running";
     function env(g, t, peak, a, d) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + d); }
     function tone(type, f, t, peak, a, d, f2) {
@@ -181,7 +203,8 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     }
     return {
       get on() { return on; }, get vol() { return vol; },
-      setOn(v) { on = v; if (master) master.gain.setTargetAtTime(on ? vol : 0, ctx.currentTime, 0.02); if (!on) this.humStop(); save(); },
+      onStatus(fn) { onStatus = fn; status(); },
+      setOn(v) { on = v; if (master) master.gain.setTargetAtTime(on ? vol : 0, ctx.currentTime, 0.02); if (!on) this.humStop(); if (silentEl) { if (on) { const pr = silentEl.play(); if (pr && pr.catch) pr.catch(() => {}); } else silentEl.pause(); } save(); status(); },
       setVol(v) { vol = v; if (master && on) master.gain.setTargetAtTime(vol, ctx.currentTime, 0.02); save(); },
       // taiko: pitched boom + skin slap; bigger with power; "ka!" rim click on a perfect stomp
       stomp(power, perfect) {
@@ -283,7 +306,9 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
 
   // --- input
   const keys = { a: false, l: false, r: false };
-  const setKey = (k, v) => { keys[k] = v; ({ a: bA, l: bL, r: bR })[k].classList.toggle("on", v); };
+  // a quick tap can start and end between two game frames; remember it so it still counts
+  let aTapped = false;
+  const setKey = (k, v) => { if (k === "a" && v && !keys.a) aTapped = true; keys[k] = v; ({ a: bA, l: bL, r: bR })[k].classList.toggle("on", v); };
   const bA = document.getElementById("bA"), bL = document.getElementById("bL"), bR = document.getElementById("bR");
   const KM = { " ": "a", z: "a", Z: "a", ArrowLeft: "l", ArrowRight: "r", a: "l", d: "r" };
   // sliders and buttons keep their own arrow/space keys; game buttons still count as the controller
@@ -304,6 +329,11 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   sndBtn.addEventListener("click", () => { sfx.setOn(!sfx.on); showSnd(); });
   sndVol.addEventListener("input", () => { sfx.setVol(+sndVol.value); if (!sfx.on) sfx.setOn(true); showSnd(); });
   showSnd();
+  const sndStatus = document.getElementById("sndStatus");
+  sfx.onStatus(st => {
+    sndStatus.textContent = { locked: "Tap the game to start sound. On iPhone, check the volume buttons too.", playing: "Sound ready", muted: "", unsupported: "This browser can't play game sound." }[st];
+    sndStatus.className = "sndstatus" + (st === "playing" ? " ready" : "");
+  });
 
   let best = 0; try { best = +localStorage.getItem("spiritStompBest") || 0; } catch (e) {}
 
@@ -382,7 +412,8 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
 
   function update() {
     S.t++;
-    const aDown = keys.a, aPressed = aDown && !S.prevA, aReleased = !aDown && S.prevA;
+    const aDown = keys.a, aPressed = (aDown && !S.prevA) || aTapped, aReleased = !aDown && S.prevA;
+    aTapped = false;
     S.prevA = aDown;
     if (S.mode !== "play") {
       if (aPressed && S.t > 20) { reset("play"); }
