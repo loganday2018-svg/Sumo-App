@@ -71,7 +71,9 @@ def joints(p):
             h, k = (hipL, kneeL) if side == "L" else (hipR, kneeR)
             hands[side] = (h[0] + (k[0] - h[0]) * 0.6 + 1, h[1] + (k[1] - h[1]) * 0.6 - 3)
         elif mode == "up":
-            hands[side] = (sh[0] - 3, sh[1] - 15)
+            hands[side] = (sh[0] + (-3 if side == "L" else 3), sh[1] - 15)
+        elif mode == "out":
+            hands[side] = (sh[0] + (-13 if side == "L" else 13), sh[1] + 1)
         elif mode == "hip":
             hands[side] = T(p, 15, 6)
     head = T(p, 0, -18)
