@@ -33,7 +33,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
 
 <main>
   <h1>SPIRIT STOMP</h1>
-  <p class="lede">Shiko drives evil spirits out of the ring. Raise the leg to charge a bigger shockwave, keep your balance while it's up, and stomp before the wisps reach you.</p>
+  <p class="lede">Shiko drives evil spirits out of the ring. Raise the leg to charge a bigger shockwave, chase the balance target while it.s up, and stomp before the wisps reach you.</p>
 
   <section class="shell" aria-label="Game">
     <div class="screen"><canvas id="cv" width="240" height="160" aria-label="Spirit Stomp game screen"></canvas></div>
@@ -48,8 +48,8 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
 
   <section class="how" aria-label="How to play">
     <div><b>Hold A</b>Raise the leg. Power and the shockwave ring grow while you hold. <kbd>Space</kbd> or <kbd>Z</kbd></div>
-    <div><b>Steer ◀ ▶</b>Keep the balance needle out of the red. More power, more wobble. <kbd>←</kbd> <kbd>→</kbd></div>
-    <div><b>Release</b>Stomp clears every wisp inside the ring. Needle in the green doubles the points.</div>
+    <div><b>Steer ◀ ▶</b>Keep the needle on the moving green target. The more power you charge, the faster it moves. <kbd>←</kbd> <kbd>→</kbd></div>
+    <div><b>Release</b>Stomp clears every wisp inside the ring. Needle on the target doubles the points.</div>
     <div><b>Hearts</b>A wisp that reaches you costs a heart. Lose all three and it's over.</div>
   </section>
 </main>
@@ -119,8 +119,16 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   const inRing = (w, r) => ((w.x - CXW) / r) ** 2 + ((w.y - CYW) / (r * 0.6)) ** 2 <= 1;
   const say = (s, x, y, c, life = 50) => S.texts.push({ s, x, y, c, life, t: 0 });
 
+  // the green target slides around the gauge; the more power, the faster it moves
+  const TGT_HALF = 0.16;
+  function moveTarget() {
+    S.tph += 0.008 + 0.04 * S.power;
+    S.tgt = 0.45 * Math.sin(S.tph) + 0.3 * Math.sin(1.7 * S.tph + S.tk);
+  }
+  const onTarget = () => Math.abs(S.bal - S.tgt) <= TGT_HALF;
+
   function stomp() {
-    const r = radius(), zone = Math.abs(S.bal) < 0.28 ? 2 : 1;
+    const r = radius(), zone = S.state === "peak" && onTarget() ? 2 : 1;
     let n = 0;
     S.wisps = S.wisps.filter(w => {
       if (inRing(w, r)) { n++; for (let i = 0; i < 6; i++) S.fx.push({ x: w.x + 5, y: w.y + 5, vx: Math.cos(i) * 0.8, vy: Math.sin(i) * 0.8 - 0.4, life: 24 }); return false; }
@@ -135,7 +143,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       say("+" + pts + (zone === 2 ? " x2" : ""), CXW, 40, zone === 2 ? "#9dffb8" : "#ffd45a");
       if (zone === 2) say("PERFECT BALANCE", CXW, 52, "#9dffb8", 40);
     }
-    S.state = "stomp"; S.st = 0; S.power = 0; S.bal = 0; S.balV = 0;
+    S.state = "stomp"; S.st = 0; S.power = 0; S.bal = 0; S.balV = 0; S.wob = 0;
   }
 
   function update() {
@@ -153,7 +161,10 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     // wrestler state machine
     switch (S.state) {
       case "ready":
-        if (aDown && S.stun <= 0) { S.state = "rising"; S.st = 0; }
+        if (aDown && S.stun <= 0) {
+          S.state = "rising"; S.st = 0;
+          S.bal = 0; S.balV = 0; S.wob = 0; S.tph = Math.random() * 6; S.tk = Math.random() * 6; S.tgt = 0;
+        }
         break;
       case "rising":
         if (!aDown) { stomp(); break; }
@@ -161,13 +172,14 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
         break;
       case "peak": {
         S.power = Math.min(1, S.power + 1 / 130);
-        // tuned so an idle player wobbles after ~3 s; steady steering can hold a full charge
-        const drift = (Math.random() - 0.5) * (0.002 + S.power * 0.005);
-        const lean = (S.side === 0 ? -1 : 1) * 0.00006 * (1 + S.power * 1.5);
-        const steer = (keys.l ? -0.0032 : 0) + (keys.r ? 0.0032 : 0);
-        S.balV = (S.balV + drift + lean + steer + S.bal * 0.0009) * 0.95;
-        S.bal += S.balV;
-        if (Math.abs(S.bal) >= 1) { S.state = "topple"; S.st = 0; S.power = 0; say("WOBBLE!", CXW, 40, "#ff8a7a"); break; }
+        moveTarget();
+        // needle: steered directly with a little inertia
+        const steer = (keys.l ? -0.005 : 0) + (keys.r ? 0.005 : 0);
+        S.balV = (S.balV + steer) * 0.88;
+        S.bal = Math.max(-1, Math.min(1, S.bal + S.balV));
+        // off target fills the wobble bar (1 s), on target drains it (2 s)
+        S.wob = onTarget() ? Math.max(0, S.wob - 1 / 120) : S.wob + 1 / 60;
+        if (S.wob >= 1) { S.state = "topple"; S.st = 0; S.power = 0; say("WOBBLE!", CXW, 40, "#ff8a7a"); break; }
         if (aReleased || !aDown) stomp();
         break;
       }
@@ -244,7 +256,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     g.fillStyle = "rgba(60,36,20,.45)"; g.beginPath(); g.ellipse(CXW, CYW + 6, 24, 5, 0, 0, 7); g.fill();
     let ox = 0;
     if (S.state === "topple" && S.st <= 24) ox = (S.st >> 1) % 2 ? 2 : -2;
-    if (S.state === "peak" && S.mode === "play") ox = Math.round(S.bal * 3);
+    if (S.state === "peak" && S.mode === "play") ox = Math.round((S.bal - S.tgt) * 3) + (S.wob > .6 && S.t % 4 < 2 ? 1 : 0);
     const flash = S.hurtT < 20 && (S.hurtT >> 2) % 2;
     if (!flash) g.drawImage(sheet, frameIndex() * 96, 0, 96, 64, FX + ox, FY, 96, 64);
     if (S.state === "topple" && S.st > 24) {      // dizzy stars
@@ -264,17 +276,24 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       panel(170, 4, 66, 20);
       for (let i = 0; i < 3; i++) heart(174 + i * 9, 7, i < S.hearts);
       txt(String(S.score), 232, 15, "#fff", "right");
-      // balance meter (only while the leg is up)
+      // balance gauge (only while the leg is up): chase the moving green target
       if (S.state === "peak" || S.state === "rising") {
-        const mx = 120, my = 30, r = 20;
-        panel(mx - 26, 4, 52, 30);
+        const mx = 120, my = 30, r = 20, ang = v => (270 + v * 70) * Math.PI / 180;
+        panel(mx - 26, 4, 52, 36);
         for (let a = 200; a <= 340; a += 3) {
-          const v = (a - 270) / 70, col = Math.abs(v) < .28 ? "#5adc78" : Math.abs(v) < .65 ? "#ffc83c" : "#e6463c";
-          const rad = a * Math.PI / 180; g.fillStyle = col; g.fillRect(Math.round(mx + Math.cos(rad) * r) - 1, Math.round(my + Math.sin(rad) * r) - 1, 2, 2);
+          const v = (a - 270) / 70, inT = Math.abs(v - S.tgt) <= TGT_HALF, rad = a * Math.PI / 180;
+          g.fillStyle = inT ? "#5adc78" : "#5a3a4a";
+          g.fillRect(Math.round(mx + Math.cos(rad) * r) - 1, Math.round(my + Math.sin(rad) * r) - 1, 2, 2);
+          if (inT) { g.fillStyle = "#3a9a50"; g.fillRect(Math.round(mx + Math.cos(rad) * (r - 3)), Math.round(my + Math.sin(rad) * (r - 3)), 1, 1); }
         }
-        const na = (270 + Math.max(-1, Math.min(1, S.bal)) * 70) * Math.PI / 180;
-        g.strokeStyle = "#fff"; g.lineWidth = 1.5; g.beginPath(); g.moveTo(mx, my); g.lineTo(mx + Math.cos(na) * (r - 3), my + Math.sin(na) * (r - 3)); g.stroke();
+        const hit = onTarget(), na = ang(S.bal);
+        g.strokeStyle = hit ? "#ffffff" : "#ff8a7a"; g.lineWidth = 1.5;
+        g.beginPath(); g.moveTo(mx, my); g.lineTo(mx + Math.cos(na) * (r - 2), my + Math.sin(na) * (r - 2)); g.stroke();
         g.fillStyle = "#ffd45a"; g.fillRect(mx - 1, my - 1, 3, 3);
+        // wobble bar under the gauge
+        g.fillStyle = "#0a0a14"; g.fillRect(mx - 20, 34, 40, 3);
+        g.fillStyle = S.wob > .6 ? (S.t % 6 < 3 ? "#ff5a4a" : "#ffc83c") : "#e6463c";
+        g.fillRect(mx - 20, 34, Math.round(40 * Math.min(1, S.wob || 0)), 3);
       }
       txt("WAVE " + S.wave + "  " + S.cleared + "/" + S.need, 120, 150, "#78dcff");
     }
@@ -285,7 +304,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       if (S.mode === "title") {
         txt("SPIRIT STOMP", 120, 40, "#ffd45a");
         txt("HOLD A  raise leg", 120, 66, "#fff");
-        txt("< >  keep balance", 120, 80, "#fff");
+        txt("< >  chase target", 120, 80, "#fff");
         txt("RELEASE  stomp", 120, 94, "#fff");
       } else {
         txt("THE SPIRITS WIN", 120, 46, "#ff8a7a");
