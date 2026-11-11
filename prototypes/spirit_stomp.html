@@ -47,6 +47,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .trow output { font-family: var(--display); font-size: 9px; color: var(--accent); font-variant-numeric: tabular-nums; }
 .trow input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
 .trow small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.startrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; }
+.startrow label { font-weight: 600; }
+.startrow select { font: 13px var(--body); background: var(--btn); color: var(--fg); border: 1px solid var(--edge); border-radius: 8px; padding: 6px 8px; }
+.startrow small { color: var(--muted); font-size: 12px; }
 .copyrow { display: grid; gap: 8px; justify-items: start; }
 .copyrow textarea { width: 100%; box-sizing: border-box; background: var(--btn); color: var(--fg); border: 1px solid var(--edge); border-radius: 8px; padding: 8px; font: 12px var(--body); resize: vertical; }
 kbd { font-family: var(--display); font-size: 9px; background: var(--btn); border: 1px solid var(--edge); border-radius: 4px; padding: 2px 5px; color: var(--accent); }
@@ -85,6 +89,17 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     </div>
     <p class="hint">Changes apply instantly, even mid-game, and are remembered in this browser.</p>
     <div class="tgrid" id="tune"></div>
+    <div class="startrow">
+      <label for="startWave">Start at wave</label>
+      <select id="startWave">
+        <option value="1">1 (blue wisps)</option>
+        <option value="2">2 (adds tiny wisps)</option>
+        <option value="3">3 (adds big wisps)</option>
+        <option value="4">4 (adds oni masks)</option>
+        <option value="5">5 (boss)</option>
+      </select>
+      <small>For practice. Takes effect on the next game.</small>
+    </div>
     <div class="copyrow">
       <button type="button" id="copyCfg" class="copy">Copy settings</button>
       <textarea id="cfgText" rows="3" readonly hidden aria-label="Current settings as text"></textarea>
@@ -96,6 +111,8 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     <div><b>Steer ◀ ▶</b>Keep the needle on the green target as it bounces back and forth. The more power you charge, the faster it bounces. <kbd>←</kbd> <kbd>→</kbd></div>
     <div><b>Release</b>Stomp clears every wisp inside the ring. Needle on the target doubles the points.</div>
     <div><b>Hearts</b>A wisp that reaches you costs a heart. Lose all three and it's over.</div>
+    <div><b>Spirits</b>Tiny ones dart in fast. Big purple ones take two stomps. Red oni masks only break on a perfect-balance stomp. Golden wisps never attack: catch one for a heart.</div>
+    <div><b>Boss every 5th wave</b>A giant oni floats above the ring. Only a charged stomp reaches it, and perfect balance hits twice as hard.</div>
   </section>
 </main>
 
@@ -268,6 +285,25 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       hurt() { if (!live()) return; const t = ctx.currentTime; tone("square", 233, t, 0.12, 0.003, 0.12, 180); tone("square", 220, t + 0.1, 0.12, 0.003, 0.18, 110); },
       warn() { if (!live()) return; tone("square", 660, ctx.currentTime, 0.05, 0.002, 0.04); },
       wave() { if (!live()) return; const t = ctx.currentTime; [523.3, 659.3, 784, 1046.5].forEach((f, i) => tone("square", f, t + i * 0.09, 0.08, 0.004, i === 3 ? 0.35 : 0.08)); },
+      sparkle() { if (!live()) return; const t = ctx.currentTime; [2637, 3136, 3520].forEach((f, i) => tone("sine", f, t + i * 0.05, 0.05, 0.002, 0.12)); },
+      golden() { if (!live()) return; const t = ctx.currentTime; [1318.5, 1568, 2093, 2637, 3136].forEach((f, i) => { tone("square", f, t + i * 0.055, 0.07, 0.003, 0.12); tone("sine", f * 2, t + i * 0.055, 0.04, 0.003, 0.2); }); },
+      crack() { if (!live()) return; const t = ctx.currentTime; noise(t, 0.3, 0.07, "highpass", 2500); tone("square", 520, t, 0.08, 0.002, 0.08, 260); },
+      clank() { if (!live()) return; const t = ctx.currentTime; tone("square", 310, t, 0.09, 0.002, 0.12); tone("square", 466, t, 0.07, 0.002, 0.1); noise(t, 0.12, 0.05, "bandpass", 3000, 3); },
+      spit() { if (!live()) return; const t = ctx.currentTime; tone("triangle", 700, t, 0.07, 0.003, 0.12, 300); },
+      bossRoar() {
+        if (!live()) return; const t = ctx.currentTime;
+        const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g2 = ctx.createGain();
+        o.type = "sawtooth"; o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(42, t + 1.3);
+        f.type = "lowpass"; f.frequency.value = 700; env(g2, t, 0.35, 0.08, 1.3);
+        o.connect(f).connect(g2).connect(master); o.start(t); o.stop(t + 1.5);
+        noise(t, 0.2, 1.2, "lowpass", 300);
+      },
+      bossHit() { if (!live()) return; const t = ctx.currentTime; tone("sine", 90, t, 0.6, 0.003, 0.3, 40); noise(t, 0.4, 0.15, "bandpass", 1200, 1); tone("square", 180, t, 0.1, 0.002, 0.12, 90); },
+      bossDown() {
+        if (!live()) return; const t = ctx.currentTime;
+        noise(t, 0.5, 1.0, "lowpass", 500); tone("sine", 70, t, 0.6, 0.005, 0.9, 30);
+        [523.3, 659.3, 784, 1046.5, 1318.5].forEach((f, i) => tone("square", f, t + 0.5 + i * 0.1, 0.09, 0.004, i === 4 ? 0.5 : 0.09));
+      },
       over() { if (!live()) return; const t = ctx.currentTime; [392, 329.6, 261.6, 196].forEach((f, i) => tone("triangle", f, t + i * 0.18, 0.25, 0.005, i === 3 ? 0.6 : 0.16)); },
     };
   })();
@@ -303,6 +339,58 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   const WCOL = { o: "#283c8c", C: "#78c8ff", W: "#ebfaff", k: "#141e46" };
   const wispImg = document.createElement("canvas"); wispImg.width = 10; wispImg.height = 11;
   (() => { const w = wispImg.getContext("2d"); WISP.forEach((r, y) => [...r].forEach((c, x) => { if (WCOL[c]) { w.fillStyle = WCOL[c]; w.fillRect(x, y, 1, 1); } })); })();
+  function pix(rows, pal) {
+    const c = document.createElement("canvas"); c.width = rows[0].length; c.height = rows.length;
+    const x2 = c.getContext("2d"); rows.forEach((r, y) => [...r].forEach((ch, x) => { if (pal[ch]) { x2.fillStyle = pal[ch]; x2.fillRect(x, y, 1, 1); } }));
+    return c;
+  }
+  const tinyImg = pix(["...o...", "..oCo..", ".oCWCo.", "oCWWWCo", "oCkWkCo", "oCWWWCo", ".oCCCo.", "..o.o.."],
+                      { o: "#2a6a9a", C: "#9ef0ff", W: "#ffffff", k: "#143c5a" });
+  const BIG = ["......oo......", ".....oCCo.....", "..o.oCWWCo.o..", ".oCooCWWCooCo.", ".oCCCWWWWCCCo.", "oCCWWWWWWWWCCo",
+               "oCWWWWWWWWWWCo", "oCWWkkWWkkWWCo", "oCWWkkWWkkWWCo", "oCWWWWWWWWWWCo", "oCWWWkkkkWWWCo", ".oCWWWWWWWWCo.",
+               "..oCCWWWWCCo..", "...oCCCCCCo...", "..oC.oC.oC.o..", "..o..o..o..o.."];
+  const BIGPAL = { o: "#3a1a6a", C: "#b07aff", W: "#f0e0ff", k: "#2a0a4a" };
+  const bigImg = pix(BIG, BIGPAL);
+  const bigCrackImg = pix(BIG.map((r, y) => [...r].map((ch, x) => (ch === "W" && ((x === 4 && y >= 5 && y <= 8) || (x === 5 && y === 9) || (x === 9 && y >= 2 && y <= 5) || (x === 10 && y === 6) || (x === 8 && y >= 11 && y <= 12))) ? "k" : ch).join("")), BIGPAL);
+  const oniImg = pix(["y..........y", "yy.oooooo.yy", ".yoRRRRRRoy.", ".oRRRRRRRRo.", "oRwwRRRRwwRo", "oRwkRRRRkwRo", "oRRRRrrRRRRo",
+                      "oRRRRRRRRRRo", "oRWkWkWkWkRo", ".oRRRRRRRRo.", "..oRRRRRRo..", ".o.oo..oo.o.", "o...o..o...o"],
+                     { o: "#3a0a0a", R: "#e0402a", r: "#9a1a14", w: "#ffe680", k: "#2a0a0a", W: "#ffffff", y: "#ffd23b" });
+  const goldImg = pix(WISP, { o: "#8a5a00", C: "#ffd23b", W: "#fff6c0", k: "#6a3a00" });
+  // boss: a giant oni spirit, two flicker frames
+  const bossImgs = [0, 1].map(fr => {
+    const c = document.createElement("canvas"); c.width = 48; c.height = 42; const b = c.getContext("2d");
+    for (let y = 0; y < 42; y++) for (let x = 0; x < 48; x++) {
+      const e = ((x - 24) / 23) ** 2 + ((y - 26) / 15) ** 2;
+      const tongue = y < 26 && y > 24 - 18 * Math.abs(Math.sin((x + fr * 3) / 3.6)) * (1 - Math.abs(x - 24) / 26);
+      if (e <= 1 || (tongue && Math.abs(x - 24) < 23)) {
+        const d = Math.min(e, 1);
+        b.fillStyle = d > .8 || (tongue && e > 1) ? "#3a1a6a" : d > .45 ? "#7a3ad0" : "#c89aff"; b.fillRect(x, y, 1, 1);
+      }
+    }
+    const fill = (col, f) => { b.fillStyle = col; for (let y = 0; y < 42; y++) for (let x = 0; x < 48; x++) if (f(x, y)) b.fillRect(x, y, 1, 1); };
+    const face = (x, y) => ((x - 24) / 13) ** 2 + ((y - 27) / 11) ** 2 <= 1;
+    fill("#3a0a0a", (x, y) => ((x - 24) / 14) ** 2 + ((y - 27) / 12) ** 2 <= 1);
+    fill("#d8402a", face);
+    fill("#ff7a5a", (x, y) => face(x, y) && ((x - 20) / 6) ** 2 + ((y - 21) / 4) ** 2 <= 1);
+    for (const sd of [-1, 1]) {                    // horns
+      fill("#3a0a0a", (x, y) => { const u = (x - 24) * sd; return y >= 6 && y <= 19 && u >= 7 + (19 - y) * 0.15 && u <= 12 - (19 - y) * 0.25 + 3; });
+      fill("#ffd23b", (x, y) => { const u = (x - 24) * sd; return y >= 8 && y <= 18 && u >= 8 + (18 - y) * 0.15 && u <= 11 - (18 - y) * 0.25 + 2; });
+    }
+    fill("#2a0a0a", (x, y) => y >= 21 && y <= 22 && (Math.abs(x - 24) >= 3 && Math.abs(x - 24) <= 9));          // brows
+    fill("#ffe680", (x, y) => y >= 24 && y <= 25 && (Math.abs(x - 24) >= 4 && Math.abs(x - 24) <= 7));          // eyes
+    fill("#ffffff", (x, y) => y === 24 && (Math.abs(x - 24) === 5));
+    fill("#2a0a0a", (x, y) => y >= 30 && y <= 33 && Math.abs(x - 24) <= 7);                                     // mouth
+    fill("#ffffff", (x, y) => ((y === 30 || y === 31) && [-6, -3, 3, 6].includes(x - 24)) || ((y === 33 || y === 32) && [-5, 5].includes(x - 24)));
+    return c;
+  });
+  // wisp types: sprite, size, speed, hits to clear, points
+  const WT = {
+    blue:  { img: wispImg, w: 10, h: 11, sp: 1,    hp: 1, pts: 100 },
+    tiny:  { img: tinyImg, w: 7,  h: 8,  sp: 1.8,  hp: 1, pts: 150 },
+    big:   { img: bigImg,  w: 14, h: 16, sp: 0.55, hp: 2, pts: 300 },
+    oni:   { img: oniImg,  w: 12, h: 13, sp: 0.8,  hp: 1, pts: 500, perfectOnly: true },
+    gold:  { img: goldImg, w: 10, h: 11, sp: 0.7,  hp: 1, pts: 1000, harmless: true },
+  };
 
   // --- input
   const keys = { a: false, l: false, r: false };
@@ -341,18 +429,41 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   let S;
   function reset(mode) {
     S = { mode, t: 0, state: "ready", st: 0, side: 0, power: 0, bal: 0, balV: 0, hearts: 3, score: 0,
-          wave: 1, cleared: 0, need: 8, spawnT: 40, wisps: [], fx: [], texts: [], shock: null,
+          wave: 1, cleared: 0, need: 8, spawnT: 40, wisps: [], fx: [], texts: [], shock: null, boss: null, oniTold: 0,
           shakeT: 99, shakeAmp: 0, dustT: 99, dustX: 0, tp: null, lastTopple: -1, stun: 0, hurtT: 99, prevA: false };
   }
   reset("title");
 
-  function spawn() {
-    const a = Math.random() * Math.PI * 2;
-    S.wisps.push({ x: RING.x + Math.cos(a) * (RING.rx + 6), y: Math.max(16, RING.y + Math.sin(a) * (RING.ry + 6)),
-                   ph: Math.random() * 6, sp: (0.16 + S.wave * 0.035 + Math.random() * 0.05) * CFG.wispSpeed });
+  // which wisp to send next: more kinds unlock as the waves go up
+  function pickType() {
+    const w = S.wave, bag = [["blue", 1]];
+    if (w >= 2) bag.push(["tiny", 0.4]);
+    if (w >= 3) bag.push(["big", 0.3]);
+    if (w >= 4) bag.push(["oni", 0.22]);
+    let r = Math.random() * bag.reduce((a, b) => a + b[1], 0);
+    for (const [k, v] of bag) { if ((r -= v) <= 0) return k; }
+    return "blue";
+  }
+  // wisps are stored by their centre point
+  function spawn(type, at) {
+    if (!type) type = S.mode === "play" && !S.wisps.some(w => w.type === "gold") && Math.random() < 0.07 ? "gold" : pickType();
+    const T = WT[type], a = Math.random() * Math.PI * 2;
+    const x = at ? at.x : RING.x + Math.cos(a) * (RING.rx + 6), y = at ? at.y : Math.max(18, RING.y + Math.sin(a) * (RING.ry + 6));
+    const w = { type, x, y, ph: Math.random() * 6, hp: T.hp, hitT: 99, life: 0,
+                sp: (0.16 + S.wave * 0.035 + Math.random() * 0.05) * CFG.wispSpeed * T.sp };
+    if (type === "gold") { w.tx = x; w.ty = y; w.retarget = 0; sfx.sparkle(); }
+    S.wisps.push(w);
+  }
+  function startBoss() {
+    const lvl = S.wave / 5;
+    S.boss = { x: 120, y: 30, hp: 6 + 2 * (lvl - 1), max: 6 + 2 * (lvl - 1), t: 0, spitT: 120, hitT: 99, lvl };
+    say("BOSS WAVE", 120, 66, "#ff8a7a", 90);
+    sfx.bossRoar();
   }
   const radius = () => 22 + 78 * S.power;
   const inRing = (w, r) => ((w.x - CXW) / r) ** 2 + ((w.y - CYW) / (r * 0.6)) ** 2 <= 1;
+  const burst = (x, y, cols, n = 6, spd = 0.8) => { for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2 + Math.random() * .3; S.fx.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 0.4, life: 24, cols }); } };
+  const knock = (w, dist) => { const dx = w.x - CXW, dy = w.y - CYW, d = Math.hypot(dx, dy) || 1; w.x += dx / d * dist; w.y += dy / d * dist * 0.7; w.hitT = 0; };
   const say = (s, x, y, c, life = 50) => S.texts.push({ s, x, y, c, life, t: 0 });
 
   // the green target slides around the gauge; the more power, the faster it moves
@@ -392,16 +503,38 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   function stomp() {
     const r = radius(), zone = S.state === "peak" && onTarget() ? 2 : 1;
     sfx.humStop(); sfx.stomp(S.power, zone === 2);
-    let n = 0;
+    let n = 0, base = 0, gold = 0, deflected = 0, cracked = 0;
     S.wisps = S.wisps.filter(w => {
-      if (inRing(w, r)) { n++; for (let i = 0; i < 6; i++) S.fx.push({ x: w.x + 5, y: w.y + 5, vx: Math.cos(i) * 0.8, vy: Math.sin(i) * 0.8 - 0.4, life: 24 }); return false; }
-      return true;
+      if (!inRing(w, r)) return true;
+      const T = WT[w.type];
+      if (T.perfectOnly && zone !== 2) { knock(w, 30); deflected++; return true; }   // oni masks shrug off sloppy stomps
+      if (--w.hp > 0) { knock(w, 16); w.sp *= 0.8; cracked++; burst(w.x, w.y, ["#f0e0ff", "#b07aff"], 4); return true; }
+      if (w.type === "gold") { gold++; burst(w.x, w.y, ["#fff6c0", "#ffd23b"], 14, 1.2); return false; }
+      n++; base += T.pts;
+      burst(w.x, w.y, w.type === "oni" ? ["#ffe680", "#e0402a"] : w.type === "big" ? ["#f0e0ff", "#b07aff"] : ["#ebfaff", "#78c8ff"], w.type === "big" ? 10 : 6);
+      return false;
     });
+    if (deflected) { sfx.clank(); if (S.oniTold++ < 3) say("PERFECT ONLY!", CXW, 64, "#ff8a7a", 50); }
+    if (cracked) sfx.crack();
+    if (gold) {
+      sfx.golden();
+      if (S.hearts < 3) { S.hearts++; say("+1 HEART", CXW, 64, "#ffd45a", 60); } else { S.score += 1000 * gold; say("+" + 1000 * gold + " GOLD", CXW, 64, "#ffd45a", 60); }
+    }
+    // the boss only feels a charged stomp; geometry agrees, since only a big ring reaches that far up
+    const B = S.boss;
+    if (B && inRing({ x: B.x, y: B.y + 18 }, r)) {
+      if (S.power >= 0.7) {
+        const dmg = zone === 2 ? 2 : 1; B.hp -= dmg; B.hitT = 0; B.y = Math.max(22, B.y - 10);
+        sfx.bossHit(); say(zone === 2 ? "CRITICAL!" : "HIT!", B.x, B.y + 6, zone === 2 ? "#9dffb8" : "#ffd45a", 40);
+        burst(B.x, B.y + 20, ["#ffe680", "#e0402a", "#c89aff"], 12, 1.4);
+        if (B.hp <= 0) bossDown();
+      } else { sfx.clank(); say("TOO WEAK!", B.x, B.y + 6, "#ff8a7a", 40); }
+    }
     S.shock = { r: 0, max: r, t: 0 };
     S.shakeT = 0; S.shakeAmp = 1 + Math.round(S.power * 2);
     S.dustT = 0; S.dustX = CXW + (S.side === 0 ? -24 : 24) - 32;
     if (n) {
-      const pts = 100 * n * n * zone;  // multi-kills scale up
+      const pts = base * n * zone;      // each wisp's value, times how many in one stomp, times perfect balance
       S.score += pts; S.cleared += n;
       for (let i = 0; i < n; i++) sfx.pop(i);
       say("+" + pts + (zone === 2 ? " x2" : ""), CXW, 40, zone === 2 ? "#9dffb8" : "#ffd45a");
@@ -410,13 +543,30 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     S.state = "stomp"; S.st = 0; S.power = 0; S.bal = 0; S.balV = 0; S.wob = 0;
   }
 
+  function bossDown() {
+    const B = S.boss, bonus = 5000 * B.lvl;
+    S.score += bonus; S.boss = null;
+    for (let i = 0; i < 40; i++) { const a = Math.random() * 7, v = 0.5 + Math.random() * 2; S.fx.push({ x: B.x, y: B.y + 20, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.5, life: 30 + Math.random() * 20, cols: ["#ffe680", "#c89aff", "#e0402a", "#ffffff"] }); }
+    S.wisps.forEach(w => { if (w.type !== "gold") burst(w.x, w.y, ["#ebfaff", "#78c8ff"]); });
+    S.wisps = S.wisps.filter(w => w.type === "gold");
+    S.shakeT = 0; S.shakeAmp = 4;
+    S.texts = [];                                     // let the victory message stand alone
+    say("ONI DEFEATED", 120, 56, "#9dffb8", 100); say("+" + bonus, 120, 68, "#ffd45a", 100);
+    sfx.bossDown();
+    S.wave++; S.cleared = 0;
+  }
+
   function update() {
     S.t++;
     const aDown = keys.a, aPressed = (aDown && !S.prevA) || aTapped, aReleased = !aDown && S.prevA;
     aTapped = false;
     S.prevA = aDown;
     if (S.mode !== "play") {
-      if (aPressed && S.t > 20) { reset("play"); }
+      if (aPressed && S.t > 20) {
+        reset("play");
+        const sw = +document.getElementById("startWave").value || 1;   // practice: jump ahead
+        if (sw > 1) { S.wave = sw; S.need = 8 + 4 * (sw - 1); if (sw % 5 === 0) startBoss(); else say("WAVE " + sw, 120, 70, "#78dcff", 70); }
+      }
       S.wisps.forEach(w => w.ph += 0.08);
       return;
     }
@@ -470,25 +620,57 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     }
 
     // wisps
-    if (--S.spawnT <= 0) { spawn(); S.spawnT = (Math.max(26, 90 - S.wave * 9) + Math.random() * 30) / CFG.spawnRate; }
+    // regular spawns (sparser during a boss fight, which sends its own minions)
+    if (--S.spawnT <= 0) {
+      if (S.boss) { if (Math.random() < 0.35) spawn(Math.random() < 0.15 ? "gold" : "blue"); }
+      else spawn();
+      S.spawnT = (Math.max(26, 90 - S.wave * 9) + Math.random() * 30) / CFG.spawnRate * (S.boss ? 1.6 : 1);
+    }
+    const B = S.boss;
+    if (B) {
+      B.t++; B.hitT++;
+      B.x = 120 + Math.sin(B.t * 0.018) * 52;
+      B.y = Math.min(70, B.y + 0.035 + B.lvl * 0.01);           // creeps closer
+      if (--B.spitT <= 0) { spawn("tiny", { x: B.x, y: B.y + 32 }); sfx.spit(); B.spitT = Math.max(70, 150 - B.lvl * 20) + Math.random() * 40; }
+      if (B.y >= 64 && Math.abs(B.x - CXW) < 34) {
+        S.hearts--; S.hurtT = 0; sfx.hurt(); say("-1", CXW, 34, "#ff8a7a", 40); B.y = 24;
+        if (S.state === "peak" || S.state === "rising") startTopple("SPOOKED!");
+      }
+    }
     S.wisps.forEach(w => {
-      const dx = CXW - 5 - w.x, dy = CYW - 8 - w.y, d = Math.hypot(dx, dy) || 1;
-      w.x += dx / d * w.sp; w.y += dy / d * w.sp * 0.8; w.ph += 0.1;
+      w.ph += 0.1; w.hitT++; w.life++;
+      if (w.type === "gold") {                      // wanders the ring, never attacks, leaves after 7 s
+        if (w.life > 420) { w.y -= 0.8; w.gone = w.y < -12; return; }
+        if (--w.retarget <= 0 || Math.hypot(w.tx - w.x, w.ty - w.y) < 3) {
+          let a, rr; do { a = Math.random() * 7; rr = 0.55 + Math.random() * 0.4; } while (false);
+          w.tx = RING.x + Math.cos(a) * RING.rx * rr; w.ty = Math.max(20, RING.y + Math.sin(a) * RING.ry * rr); w.retarget = 70 + Math.random() * 50;
+        }
+        const dx = w.tx - w.x, dy = w.ty - w.y, d = Math.hypot(dx, dy) || 1;
+        w.x += dx / d * 0.7; w.y += dy / d * 0.7;
+        return;
+      }
+      const dx = CXW - w.x, dy = CYW - 4 - w.y, d = Math.hypot(dx, dy) || 1;
+      const zig = w.type === "tiny" ? Math.sin(w.life * 0.25) * 0.5 : 0;
+      w.x += dx / d * w.sp - dy / d * zig; w.y += dy / d * w.sp * 0.8 + dx / d * zig * 0.5;
     });
     S.wisps = S.wisps.filter(w => {
-      if (Math.hypot(CXW - 5 - w.x, CYW - 10 - w.y) < 14) {
+      if (w.gone) return false;
+      if (w.type !== "gold" && Math.hypot(CXW - w.x, CYW - 4 - w.y) < 14 + (WT[w.type].h - 11) / 2) {
         S.hearts--; S.hurtT = 0; sfx.hurt(); say("-1", CXW, 34, "#ff8a7a", 40);
         if (S.state === "peak" || S.state === "rising") startTopple("SPOOKED!");
         return false;
       }
       return true;
     });
-    if (S.cleared >= S.need) { sfx.wave(); S.wave++; S.cleared = 0; S.need += 4; say("WAVE " + S.wave, 120, 70, "#78dcff", 70); }
+    if (!S.boss && S.cleared >= S.need) {
+      sfx.wave(); S.wave++; S.cleared = 0; S.need += 4;
+      if (S.wave % 5 === 0) startBoss(); else say("WAVE " + S.wave, 120, 70, "#78dcff", 70);
+    }
     if (S.hearts <= 0) {
       S.mode = "over"; S.t = 0; sfx.humStop(); sfx.over();
       if (S.score > best) { best = S.score; try { localStorage.setItem("spiritStompBest", best); } catch (e) {} }
     }
-    S.fx.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; });
+    S.fx.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += p.cols && p.cols.length > 3 ? 0.03 : 0; p.life--; });
     S.fx = S.fx.filter(p => p.life > 0);
     S.texts.forEach(t => t.t++);
     S.texts = S.texts.filter(t => t.t < t.life);
@@ -533,6 +715,12 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       g.strokeStyle = "rgba(120,220,255," + a * .7 + ")"; g.lineWidth = 1;
       g.beginPath(); g.ellipse(CXW, CYW, S.shock.r * .8, S.shock.r * .48, 0, 0, 7); g.stroke();
     }
+    // boss (behind the wrestler)
+    if (S.boss && S.mode === "play") {
+      const B = S.boss, img = bossImgs[(S.t >> 3) % 2], bob = Math.round(Math.sin(S.t * 0.06) * 2);
+      g.fillStyle = "rgba(40,10,60,.35)"; g.beginPath(); g.ellipse(B.x, Math.min(118, B.y + 62), 20, 4, 0, 0, 7); g.fill();
+      if (!(B.hitT < 12 && (B.hitT >> 1) % 2)) g.drawImage(img, Math.round(B.x - 24), Math.round(B.y + bob));
+    }
     // wrestler shadow + sprite
     g.fillStyle = "rgba(60,36,20,.45)"; g.beginPath(); g.ellipse(CXW, CYW + 6, 24, 5, 0, 0, 7); g.fill();
     let ox = 0;
@@ -554,8 +742,17 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     } else if (!flash) g.drawImage(sheet, frameIndex() * 96, 0, 96, 64, FX + ox, FY, 96, 64);
     if (S.dustT < 12) g.drawImage(dust, (S.dustT / 3 | 0) * 64, 0, 64, 32, S.dustX, FY + 36, 64, 32);
     // wisps (sorted by y so nearer ones overlap)
-    S.wisps.slice().sort((a, b) => a.y - b.y).forEach(w => g.drawImage(wispImg, Math.round(w.x), Math.round(w.y + Math.sin(w.ph) * 1.5)));
-    S.fx.forEach(p => { g.fillStyle = p.life > 12 ? "#ebfaff" : "#78c8ff"; g.fillRect(Math.round(p.x), Math.round(p.y), 1, 1); });
+    S.wisps.slice().sort((a, b) => a.y - b.y).forEach(w => {
+      const T = WT[w.type], img = w.type === "big" && w.hp < T.hp ? bigCrackImg : T.img;
+      if (w.hitT < 10 && (w.hitT >> 1) % 2) return;                      // flicker after a knock-back
+      const x = Math.round(w.x - T.w / 2), y = Math.round(w.y - T.h / 2 + Math.sin(w.ph) * 1.5);
+      if (w.type === "gold") {
+        if (w.life > 360 && (w.life >> 2) % 2) return;                   // blinks before it escapes
+        for (let i = 0; i < 2; i++) { const a = S.t * 0.2 + i * 3.1; g.fillStyle = i ? "#ffffff" : "#ffd23b"; g.fillRect(Math.round(w.x + Math.cos(a) * 8), Math.round(w.y + Math.sin(a) * 6), 1, 1); }
+      }
+      g.drawImage(img, x, y);
+    });
+    S.fx.forEach(p => { const c = p.cols || ["#ebfaff", "#78c8ff"]; g.fillStyle = c[p.life > 12 ? 0 : c.length - 1] || c[0]; if (c.length > 2) g.fillStyle = c[(p.life >> 2) % c.length]; g.fillRect(Math.round(p.x), Math.round(p.y), 1, 1); });
     g.restore();
 
     // HUD
@@ -592,7 +789,12 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
         g.fillStyle = S.wob > .6 ? (S.t % 6 < 3 ? "#ff5a4a" : "#ffc83c") : "#e6463c";
         g.fillRect(mx - 28, 43, Math.round(56 * Math.min(1, S.wob || 0)), 4);
       }
-      txt("WAVE " + S.wave + "  " + S.cleared + "/" + S.need, 120, 150, "#78dcff");
+      if (S.boss) {
+        const B = S.boss; txt("ONI", 62, 150, "#ff8a7a", "left");
+        g.fillStyle = "#0a0a14"; g.fillRect(90, 151, 90, 6);
+        g.fillStyle = B.hitT < 8 ? "#ffffff" : "#e0402a"; g.fillRect(90, 151, Math.round(90 * Math.max(0, B.hp) / B.max), 6);
+        g.strokeStyle = "#e8e2fa"; g.lineWidth = 1; g.strokeRect(89.5, 150.5, 91, 7);
+      } else txt("WAVE " + S.wave + "  " + S.cleared + "/" + S.need, 120, 150, "#78dcff");
     }
     S.texts.forEach(t => txt(t.s, t.x, t.y - t.t * 0.3, t.c));
 
@@ -612,8 +814,11 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     }
   }
 
+  // test hook, only when the page is opened with #debug
+  if (location.hash === "#debug") window.__ss = { spawn, startBoss, stompNow: (power, perfect) => { S.state = perfect ? "peak" : "rising"; S.power = power; if (perfect) { S.bal = S.tgt = 0; } stomp(); }, get S() { return S; } };
+
   // title screen gets a few drifting wisps for atmosphere
-  for (let i = 0; i < 5; i++) spawn();
+  for (let i = 0; i < 5; i++) spawn("blue");
 
   let last = performance.now(), acc = 0;
   function loop(now) {
