@@ -90,12 +90,40 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   // ---- the five demos. Each: buttons, how, init, update(tick), draw, press(i), release(i)
   const HEIGHTS = [58, 84, 106];
   const GAMES = [
-    { name: "1 Spirit Pole", buttons: ["HIGH", "MID", "LOW"], how: "Glowing spirit marks appear on the pole at three heights. Strike the matching height before the ring closes.",
-      init(s) { s.spots = []; s.next = 40; s.score = 0; s.combo = 0; s.miss = 0; s.time = 30 * 60; },
-      update(s) { if (--s.next <= 0) { let h; do { h = Math.random() * 3 | 0; } while (s.spots.some(p => p.h === h)); s.spots.push({ h, t: 0, life: Math.max(42, 90 - s.score * 2) }); s.next = Math.max(26, 64 - s.score * 1.5) + Math.random() * 16; }
-        s.spots = s.spots.filter(p => { if (++p.t > p.life) { s.combo = 0; s.miss++; pop("MISSED", "#ff8a7a"); sfx.miss(); return false; } return true; }); },
-      press(s, i) { strike(HEIGHTS[i]); const k = s.spots.findIndex(p => p.h === i); if (k < 0) { s.combo = 0; sfx.miss(); pop("NOTHING THERE", "#ff8a7a"); return; } const p = s.spots.splice(k, 1)[0], early = p.t / p.life; s.combo++; const pts = (early > .55 ? 2 : 1) * (1 + (s.combo / 5 | 0)); s.score += pts; early > .55 ? sfx.perfect() : sfx.hit(.5); shake(); pop(early > .55 ? "PERFECT +" + pts : "+" + pts, early > .55 ? "#9dffb8" : "#ffd45a", 196, HEIGHTS[i] - 10); },
-      draw(s) { drawPole(sh()); s.spots.forEach(p => { const y = HEIGHTS[p.h] + 2, r = 14 * (1 - p.t / p.life) + 4; g.fillStyle = "#78dcff"; g.fillRect(POLE_X + 1, y - 3, 10, 6); g.fillStyle = "#ebfaff"; g.fillRect(POLE_X + 3, y - 2, 6, 4); g.strokeStyle = p.t / p.life > .55 ? "#9dffb8" : "#78dcff"; g.lineWidth = 1; g.beginPath(); g.arc(POLE_X + 6, y, r, 0, 7); g.stroke(); }); drawWrestler(); txt("SCORE " + s.score, 6, 6, "#fff", "left"); txt("COMBO " + s.combo, 6, 18, "#78dcff", "left"); } },
+    { name: "1 Spirit Pole", buttons: ["HIGH", "MID", "LOW"], noTimer: true,
+      how: "Spirits possess the pole at three heights. Strike the matching height before the ring closes. Hit when the ring turns green for a perfect: double XP. Purple ones take two hits, red oni masks only break on a perfect, gold ones give a heart back. Swinging at nothing leaves you off balance for a moment.",
+      TYPES: { blue: { c: "#78dcff", w: "#ebfaff", life: 1, hp: 1, pay: 1, r: 5 }, tiny: { c: "#9ef0ff", w: "#ffffff", life: .62, hp: 1, pay: 1, r: 3 }, big: { c: "#b07aff", w: "#f0e0ff", life: 1.5, hp: 2, pay: 2, r: 7 }, oni: { c: "#e0402a", w: "#ffe680", life: 1.15, hp: 1, pay: 3, r: 5 }, gold: { c: "#ffd23b", w: "#fff6c0", life: .9, hp: 1, pay: 0, r: 5 } },
+      init(s) { s.spots = []; s.next = 50; s.xp = 0; s.combo = 0; s.hearts = 3; s.wave = 1; s.cleared = 0; s.need = 5; s.time = 1e9; s.hurtT = 99; s.bits = []; },
+      pick(s) { if (Math.random() < .06 && s.hearts < 3) return "gold"; const bag = [["blue", 1]]; if (s.wave >= 2) bag.push(["tiny", .45]); if (s.wave >= 3) bag.push(["big", .35]); if (s.wave >= 4) bag.push(["oni", .3]); let r = Math.random() * bag.reduce((a, b) => a + b[1], 0); for (const [k, v] of bag) if ((r -= v) <= 0) return k; return "blue"; },
+      update(s) { s.hurtT++; const maxOut = s.wave >= 4 ? 3 : s.wave >= 2 ? 2 : 1;
+        if (--s.next <= 0 && s.spots.length < maxOut) { const free = [0, 1, 2].filter(h => !s.spots.some(p => p.h === h)); const h = free[Math.random() * free.length | 0], type = this.pick(s), T = this.TYPES[type];
+          s.spots.push({ h, t: 0, type, hp: T.hp, life: Math.max(34, (96 - s.wave * 7) * T.life) }); s.next = Math.max(20, 62 - s.wave * 5) + Math.random() * 18; }
+        s.spots = s.spots.filter(p => { if (++p.t <= p.life) return true; if (p.type === "gold") return false; s.combo = 0; s.hearts--; s.hurtT = 0; sfx.bad(); pop("POSSESSED! -1", "#ff8a7a"); return false; });
+        s.bits = s.bits.filter(b => { b.x += b.vx; b.y += b.vy; b.vy += .08; return --b.life > 0; });
+        if (s.cleared >= s.need) { s.wave++; s.cleared = 0; s.need += 2; sfx.win(); pop("WAVE " + s.wave, "#78dcff", 120, 30); }
+        if (s.hearts <= 0) s.time = 0; },
+      press(s, i) { if (W.stun > 0) return; strike(HEIGHTS[i]); const k = s.spots.findIndex(p => p.h === i);
+        if (k < 0) { s.combo = 0; W.stun = 18; sfx.miss(); pop("WHIFF!", "#ff8a7a"); return; }   // a wild swing costs a beat, so mashing loses
+        const p = s.spots[k], T = this.TYPES[p.type], perfect = p.t / p.life > .6, px = 196, py = HEIGHTS[i] - 10;
+        const burst = () => { for (let n = 0; n < 8; n++) s.bits.push({ x: POLE_X + 6, y: HEIGHTS[i] + 2, vx: Math.cos(n) * 1.4 - .6, vy: Math.sin(n) * 1.2 - .8, life: 22, c: n % 2 ? T.c : T.w }); };
+        shake();
+        if (p.type === "oni" && !perfect) { s.combo = 0; tone(310, .12, .1); pop("WAIT FOR GREEN", "#ff8a7a", px, py); return; }
+        if (--p.hp > 0) { p.t = Math.max(0, p.t - p.life * .25); sfx.crack(); pop("CRACKED", "#b07aff", px, py); return; }
+        s.spots.splice(k, 1); burst();
+        if (p.type === "gold") { s.hearts = Math.min(3, s.hearts + 1); s.xp += 5; sfx.win(); pop("+1 HEART", "#ffd45a", px, py); return; }
+        s.combo++; s.cleared++; const gain = s.wave * T.pay * (perfect ? 2 : 1); s.xp += gain; perfect ? sfx.perfect() : sfx.hit(.5);
+        pop((perfect ? "PERFECT +" : "+") + gain + " XP", perfect ? "#9dffb8" : "#ffd45a", px, py); },
+      draw(s) { drawPole(sh() + (s.hurtT < 12 ? ((s.hurtT >> 1) % 2 ? 2 : -2) : 0));
+        s.spots.forEach(p => { const T = this.TYPES[p.type], y = HEIGHTS[p.h] + 2, f = p.t / p.life, ring = T.r + 3 + 16 * (1 - f), cx = POLE_X + 6;
+          g.fillStyle = T.c; g.fillRect(cx - T.r, y - T.r + 1, T.r * 2, T.r * 2 - 2); g.fillStyle = T.w; g.fillRect(cx - T.r + 2, y - T.r + 2, T.r * 2 - 4, T.r * 2 - 4);
+          g.fillStyle = "#141e46"; g.fillRect(cx - 2, y - 1, 1, 2); g.fillRect(cx + 1, y - 1, 1, 2);
+          if (p.type === "oni") { g.fillStyle = "#ffd23b"; g.fillRect(cx - T.r, y - T.r - 3, 2, 4); g.fillRect(cx + T.r - 2, y - T.r - 3, 2, 4); g.fillStyle = "#e0402a"; g.fillRect(cx - T.r + 2, y - T.r + 2, T.r * 2 - 4, T.r * 2 - 4); g.fillStyle = "#ffe680"; g.fillRect(cx - 3, y - 1, 2, 2); g.fillRect(cx + 1, y - 1, 2, 2); }
+          if (p.type === "big" && p.hp === 1) { g.fillStyle = "#2a0a4a"; g.fillRect(cx - 1, y - T.r + 1, 1, 5); g.fillRect(cx, y - 1, 1, 5); }
+          g.strokeStyle = f > .6 ? "#9dffb8" : T.c; g.lineWidth = f > .6 ? 2 : 1; g.beginPath(); g.arc(cx, y, ring, 0, 7); g.stroke(); });
+        s.bits.forEach(b => { g.fillStyle = b.c; g.fillRect(Math.round(b.x), Math.round(b.y), 2, 2); });
+        drawWrestler();
+        for (let i = 0; i < 3; i++) { g.fillStyle = i < s.hearts ? "#e0483c" : "#4a3a5a"; [".##.##.", "#######", "#######", ".#####.", "..###..", "...#..."].forEach((r, y) => [...r].forEach((c, x) => { if (c === "#") g.fillRect(204 + i * 10 + x, 6 + y, 1, 1); })); }
+        txt("XP " + s.xp, 6, 6, "#78dcff", "left"); txt("COMBO " + s.combo, 6, 18, "#fff", "left"); txt("WAVE " + s.wave + "  " + s.cleared + "/" + s.need, 120, 148, "#78dcff"); } },
 
     { name: "2 Rhythm Strikes", buttons: ["LEFT", "", "RIGHT"], how: "Notes slide toward the ring. Tap LEFT or RIGHT as each one lands. The beat keeps speeding up.",
       init(s) { s.notes = []; s.next = 50; s.side = 0; s.score = 0; s.combo = 0; s.best = 0; s.beat = 38; s.time = 30 * 60; },
@@ -168,9 +196,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   function update() { tick++; W.hitT++; shakeT++; if (W.stun > 0) W.stun--; pops.forEach(p => p.t++); while (pops.length && pops[0].t > 45) pops.shift();
     if (mode !== "play") return; GAMES[cur].update(S); if (--S.time <= 0) { mode = "over"; tick = 0; sfx.win(); } }
   function draw() { g.drawImage(bg, 0, 0); const gm = GAMES[cur]; gm.draw(S);
-    if (mode === "play") { txt(Math.ceil(S.time / 60) + "s", 234, 18, S.time < 300 ? "#ff8a7a" : "#fff", "right"); pops.forEach(p => txt(p.s, p.x, p.y - p.t * .3, p.c)); }
+    if (mode === "play") { if (!gm.noTimer) txt(Math.ceil(S.time / 60) + "s", 234, 18, S.time < 300 ? "#ff8a7a" : "#fff", "right"); pops.forEach(p => txt(p.s, p.x, p.y - p.t * .3, p.c)); }
     else { g.fillStyle = "rgba(14,10,28,.7)"; g.fillRect(0, 0, 240, 160); txt(gm.name.slice(2).toUpperCase(), 120, 44, "#ffd45a");
-      if (mode === "over") { const r = cur === 2 || cur === 3 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt("TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
+      if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 2 || cur === 3 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt(gm.noTimer ? "POSSESSED!" : "TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
       if ((tick >> 5) % 2 === 0) txt(mode === "over" ? "TAP TO RETRY" : "TAP TO START", 120, 110, "#78dcff"); } }
   let last = performance.now(), acc = 0;
   function loop(now) { acc += Math.min(200, now - last); last = now; while (acc >= 1000 / 60) { acc -= 1000 / 60; update(); } draw(); requestAnimationFrame(loop); }
