@@ -80,7 +80,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
 
   <section class="how" aria-label="How to play">
     <div><b>Hold A</b>Raise the leg. Power and the shockwave ring grow while you hold. <kbd>Space</kbd> or <kbd>Z</kbd></div>
-    <div><b>Steer ◀ ▶</b>Keep the needle on the moving green target. The more power you charge, the faster it moves. <kbd>←</kbd> <kbd>→</kbd></div>
+    <div><b>Steer ◀ ▶</b>Keep the needle on the green target as it bounces back and forth. The more power you charge, the faster it bounces. <kbd>←</kbd> <kbd>→</kbd></div>
     <div><b>Release</b>Stomp clears every wisp inside the ring. Needle on the target doubles the points.</div>
     <div><b>Hearts</b>A wisp that reaches you costs a heart. Lose all three and it's over.</div>
   </section>
@@ -91,8 +91,8 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   // ---------------- tuning
   const SETTINGS = [
     // key, label, min, max, step, unit, hint
-    ["startSpeed", "Target speed at start", 0.25, 3, 0.05, "×", "How fast the green target drifts when you first raise the leg."],
-    ["speedUp", "Speed-up at full power", 1, 10, 0.25, "×", "How many times faster the target moves once power is full."],
+    ["startSpeed", "Target speed at start", 0.25, 3, 0.05, "×", "How fast the green target slides when you first raise the leg."],
+    ["speedUp", "Speed-up at full power", 1, 10, 0.25, "×", "How many times faster the target bounces once power is full."],
     ["targetSize", "Target size", 0.1, 0.8, 0.02, "", "Width of the green zone. The gauge runs from -1 to 1."],
     ["wobble", "Time off target before toppling", 0.3, 3, 0.1, "s", "How long the needle can be off target in total before he falls."],
     ["recover", "Recovery time", 0.5, 5, 0.1, "s", "How long being on target takes to fully drain the wobble bar."],
@@ -200,10 +200,14 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   const say = (s, x, y, c, life = 50) => S.texts.push({ s, x, y, c, life, t: 0 });
 
   // the green target slides around the gauge; the more power, the faster it moves
+  // the green target ping-pongs across the gauge, bouncing off each end.
+  // speed at zero power = startSpeed, at full power = startSpeed * speedUp
   function moveTarget() {
-    // speed at zero power = startSpeed, at full power = startSpeed * speedUp
-    S.tph += 0.008 * CFG.startSpeed * (1 + (CFG.speedUp - 1) * S.power);
-    S.tgt = 0.45 * Math.sin(S.tph) + 0.3 * Math.sin(1.7 * S.tph + S.tk);
+    const lim = 0.95 - CFG.targetSize / 2;
+    S.tgt += S.tdir * 0.0035 * CFG.startSpeed * (1 + (CFG.speedUp - 1) * S.power);
+    if (S.tgt > lim) { S.tgt = lim; S.tdir = -1; S.tbump = 6; }
+    if (S.tgt < -lim) { S.tgt = -lim; S.tdir = 1; S.tbump = 6; }
+    if (S.tbump > 0) S.tbump--;
   }
   const onTarget = () => Math.abs(S.bal - S.tgt) <= CFG.targetSize / 2;
 
@@ -243,10 +247,11 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       case "ready":
         if (aDown && S.stun <= 0) {
           S.state = "rising"; S.st = 0;
-          S.bal = 0; S.balV = 0; S.wob = 0; S.tph = Math.random() * 6; S.tk = Math.random() * 6; S.tgt = 0;
+          S.bal = 0; S.balV = 0; S.wob = 0; S.tgt = (Math.random() - 0.5) * 0.6; S.tdir = Math.random() < 0.5 ? -1 : 1; S.tbump = 0;
         }
         break;
       case "rising":
+        moveTarget();
         if (!aDown) { stomp(); break; }
         if (S.st >= 14) { S.state = "peak"; S.st = 0; }
         break;
@@ -370,6 +375,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
         g.strokeStyle = hit ? "#ffffff" : "#ff8a7a"; g.lineWidth = 1.5;
         g.beginPath(); g.moveTo(mx, my); g.lineTo(mx + Math.cos(na) * (r - 2), my + Math.sin(na) * (r - 2)); g.stroke();
         g.fillStyle = "#ffd45a"; g.fillRect(mx - 1, my - 1, 3, 3);
+        if (S.tbump > 0) { const ea = ang(S.tdir < 0 ? 1 : -1); g.fillStyle = "#ffffff"; g.fillRect(Math.round(mx + Math.cos(ea) * (r + 3)) - 1, Math.round(my + Math.sin(ea) * (r + 3)) - 1, 3, 3); }
         // wobble bar under the gauge
         g.fillStyle = "#0a0a14"; g.fillRect(mx - 20, 34, 40, 3);
         g.fillStyle = S.wob > .6 ? (S.t % 6 < 3 ? "#ff5a4a" : "#ffc83c") : "#e6463c";
