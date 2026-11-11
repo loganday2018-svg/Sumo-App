@@ -102,6 +102,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     </div>
     <div class="copyrow">
       <button type="button" id="copyCfg" class="copy">Copy settings</button>
+      <button type="button" id="resetXP" class="copy">Reset saved XP</button>
       <textarea id="cfgText" rows="3" readonly hidden aria-label="Current settings as text"></textarea>
     </div>
   </section>
@@ -112,6 +113,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     <div><b>Release</b>Stomp clears every wisp inside the ring. Needle on the target doubles the points.</div>
     <div><b>Hearts</b>A wisp that reaches you costs a heart. Lose all three and it's over.</div>
     <div><b>Spirits</b>Tiny ones dart in fast. Big purple ones take two stomps. Red oni masks only break on a perfect-balance stomp. Golden wisps never attack: catch one for a heart.</div>
+    <div><b>Experience</b>Each spirit gives XP equal to the wave number. Big ones give double, oni masks triple, and a perfect stomp doubles it all. XP carries over and raises your rank.</div>
     <div><b>Boss every 5th wave</b>A giant oni floats above the ring. Only a charged stomp reaches it, and perfect balance hits twice as hard.</div>
   </section>
 </main>
@@ -385,10 +387,10 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   });
   // wisp types: sprite, size, speed, hits to clear, points
   const WT = {
-    blue:  { img: wispImg, w: 10, h: 11, sp: 1,    hp: 1, pts: 100 },
-    tiny:  { img: tinyImg, w: 7,  h: 8,  sp: 1.8,  hp: 1, pts: 150 },
-    big:   { img: bigImg,  w: 14, h: 16, sp: 0.55, hp: 2, pts: 300 },
-    oni:   { img: oniImg,  w: 12, h: 13, sp: 0.8,  hp: 1, pts: 500, perfectOnly: true },
+    blue:  { img: wispImg, w: 10, h: 11, sp: 1,    hp: 1, pts: 100, xp: 1 },
+    tiny:  { img: tinyImg, w: 7,  h: 8,  sp: 1.8,  hp: 1, pts: 150, xp: 1 },
+    big:   { img: bigImg,  w: 14, h: 16, sp: 0.55, hp: 2, pts: 300, xp: 2 },
+    oni:   { img: oniImg,  w: 12, h: 13, sp: 0.8,  hp: 1, pts: 500, xp: 3, perfectOnly: true },
     gold:  { img: goldImg, w: 10, h: 11, sp: 0.7,  hp: 1, pts: 1000, harmless: true },
   };
 
@@ -424,13 +426,34 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   });
 
   let best = 0; try { best = +localStorage.getItem("spiritStompBest") || 0; } catch (e) {}
+  // ---------------- experience
+  // XP per spirit = wave number x type (blue/tiny 1, big 2, oni 3), doubled by a perfect-balance stomp.
+  // Boss = 50 x boss number. Golden wisp = 5. XP carries over between runs and sets the training rank.
+  const BOSS_XP = 50, GOLD_XP = 5;
+  const RANKS = [["JONOKUCHI", 0], ["JONIDAN", 100], ["SANDANME", 300], ["MAKUSHITA", 700], ["JURYO", 1500],
+                 ["MAEGASHIRA", 3000], ["KOMUSUBI", 5000], ["SEKIWAKE", 8000], ["OZEKI", 12000], ["YOKOZUNA", 18000]];
+  let totalXP = 0; try { totalXP = +localStorage.getItem("spiritStompXP") || 0; } catch (e) {}
+  const rankOf = xp => { let i = 0; while (i + 1 < RANKS.length && xp >= RANKS[i + 1][1]) i++; return i; };
+  function gainXP(n) { if (n <= 0) return; S.xp += n; S.xpFlash = 0; say("+" + n + " XP", 30, 40, "#78dcff", 45); }
+  function finishRun() {
+    const before = rankOf(totalXP);
+    totalXP += S.xp; try { localStorage.setItem("spiritStompXP", totalXP); } catch (e) {}
+    S.rankUp = rankOf(totalXP) > before;
+    // hand the result to the main game: listen for "spiritstomp:result" or read window.spiritStompResult
+    const result = { xp: S.xp, totalXP, rank: RANKS[rankOf(totalXP)][0], score: S.score, wave: S.wave, perfectStomps: S.perfects, bossesBeaten: S.bosses };
+    window.spiritStompResult = result;
+    try { window.dispatchEvent(new CustomEvent("spiritstomp:result", { detail: result })); } catch (e) {}
+  }
+  const resetBtn = document.getElementById("resetXP");
+  resetBtn.addEventListener("click", () => { totalXP = 0; try { localStorage.removeItem("spiritStompXP"); } catch (e) {} resetBtn.textContent = "XP reset"; setTimeout(() => resetBtn.textContent = "Reset saved XP", 1500); });
 
   // --- game state
   let S;
   function reset(mode) {
     S = { mode, t: 0, state: "ready", st: 0, side: 0, power: 0, bal: 0, balV: 0, hearts: 3, score: 0,
           wave: 1, cleared: 0, need: 8, spawnT: 40, wisps: [], fx: [], texts: [], shock: null, boss: null, oniTold: 0,
-          shakeT: 99, shakeAmp: 0, dustT: 99, dustX: 0, tp: null, lastTopple: -1, stun: 0, hurtT: 99, prevA: false };
+          shakeT: 99, shakeAmp: 0, dustT: 99, dustX: 0, tp: null, lastTopple: -1, stun: 0, hurtT: 99, prevA: false,
+          xp: 0, xpFlash: 99, perfects: 0, bosses: 0, rankUp: false };
   }
   reset("title");
 
@@ -503,21 +526,21 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   function stomp() {
     const r = radius(), zone = S.state === "peak" && onTarget() ? 2 : 1;
     sfx.humStop(); sfx.stomp(S.power, zone === 2);
-    let n = 0, base = 0, gold = 0, deflected = 0, cracked = 0;
+    let n = 0, base = 0, gold = 0, deflected = 0, cracked = 0, xp = 0;
     S.wisps = S.wisps.filter(w => {
       if (!inRing(w, r)) return true;
       const T = WT[w.type];
       if (T.perfectOnly && zone !== 2) { knock(w, 30); deflected++; return true; }   // oni masks shrug off sloppy stomps
       if (--w.hp > 0) { knock(w, 16); w.sp *= 0.8; cracked++; burst(w.x, w.y, ["#f0e0ff", "#b07aff"], 4); return true; }
       if (w.type === "gold") { gold++; burst(w.x, w.y, ["#fff6c0", "#ffd23b"], 14, 1.2); return false; }
-      n++; base += T.pts;
+      n++; base += T.pts; xp += S.wave * T.xp * zone;
       burst(w.x, w.y, w.type === "oni" ? ["#ffe680", "#e0402a"] : w.type === "big" ? ["#f0e0ff", "#b07aff"] : ["#ebfaff", "#78c8ff"], w.type === "big" ? 10 : 6);
       return false;
     });
     if (deflected) { sfx.clank(); if (S.oniTold++ < 3) say("PERFECT ONLY!", CXW, 64, "#ff8a7a", 50); }
     if (cracked) sfx.crack();
     if (gold) {
-      sfx.golden();
+      sfx.golden(); xp += GOLD_XP * gold;
       if (S.hearts < 3) { S.hearts++; say("+1 HEART", CXW, 64, "#ffd45a", 60); } else { S.score += 1000 * gold; say("+" + 1000 * gold + " GOLD", CXW, 64, "#ffd45a", 60); }
     }
     // the boss only feels a charged stomp; geometry agrees, since only a big ring reaches that far up
@@ -536,22 +559,26 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     if (n) {
       const pts = base * n * zone;      // each wisp's value, times how many in one stomp, times perfect balance
       S.score += pts; S.cleared += n;
+      if (zone === 2) S.perfects++;
       for (let i = 0; i < n; i++) sfx.pop(i);
       say("+" + pts + (zone === 2 ? " x2" : ""), CXW, 40, zone === 2 ? "#9dffb8" : "#ffd45a");
       if (zone === 2) say("PERFECT BALANCE", CXW, 52, "#9dffb8", 40);
     }
+    gainXP(xp);
     S.state = "stomp"; S.st = 0; S.power = 0; S.bal = 0; S.balV = 0; S.wob = 0;
   }
 
   function bossDown() {
     const B = S.boss, bonus = 5000 * B.lvl;
-    S.score += bonus; S.boss = null;
+    S.score += bonus; S.boss = null; S.bosses++;
+    const bxp = BOSS_XP * B.lvl;
     for (let i = 0; i < 40; i++) { const a = Math.random() * 7, v = 0.5 + Math.random() * 2; S.fx.push({ x: B.x, y: B.y + 20, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.5, life: 30 + Math.random() * 20, cols: ["#ffe680", "#c89aff", "#e0402a", "#ffffff"] }); }
     S.wisps.forEach(w => { if (w.type !== "gold") burst(w.x, w.y, ["#ebfaff", "#78c8ff"]); });
     S.wisps = S.wisps.filter(w => w.type === "gold");
     S.shakeT = 0; S.shakeAmp = 4;
     S.texts = [];                                     // let the victory message stand alone
     say("ONI DEFEATED", 120, 56, "#9dffb8", 100); say("+" + bonus, 120, 68, "#ffd45a", 100);
+    gainXP(bxp);
     sfx.bossDown();
     S.wave++; S.cleared = 0;
   }
@@ -667,7 +694,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       if (S.wave % 5 === 0) startBoss(); else say("WAVE " + S.wave, 120, 70, "#78dcff", 70);
     }
     if (S.hearts <= 0) {
-      S.mode = "over"; S.t = 0; sfx.humStop(); sfx.over();
+      S.mode = "over"; S.t = 0; sfx.humStop(); sfx.over(); finishRun();
       if (S.score > best) { best = S.score; try { localStorage.setItem("spiritStompBest", best); } catch (e) {} }
     }
     S.fx.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += p.cols && p.cols.length > 3 ? 0.03 : 0; p.life--; });
@@ -760,6 +787,8 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       panel(4, 4, 70, 20); txt("POWER", 8, 7, "#ffd45a", "left");
       g.fillStyle = "#0a0a14"; g.fillRect(8, 16, 62, 5);
       g.fillStyle = S.power > .95 ? (S.t % 8 < 4 ? "#ffffff" : "#ffaa28") : "#ffaa28"; g.fillRect(8, 16, Math.round(62 * S.power), 5);
+      S.xpFlash++;
+      txt("XP " + S.xp, 6, 27, S.xpFlash < 12 ? "#ffffff" : "#78dcff", "left");
       panel(170, 4, 66, 20);
       for (let i = 0; i < 3; i++) heart(174 + i * 9, 7, i < S.hearts);
       txt(String(S.score), 232, 15, "#fff", "right");
@@ -796,7 +825,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
         g.strokeStyle = "#e8e2fa"; g.lineWidth = 1; g.strokeRect(89.5, 150.5, 91, 7);
       } else txt("WAVE " + S.wave + "  " + S.cleared + "/" + S.need, 120, 150, "#78dcff");
     }
-    S.texts.forEach(t => txt(t.s, t.x, t.y - t.t * 0.3, t.c));
+    if (S.mode === "play") S.texts.forEach(t => txt(t.s, t.x, t.y - t.t * 0.3, t.c));
 
     if (S.mode === "title" || S.mode === "over") {
       g.fillStyle = "rgba(14,10,28,.72)"; g.fillRect(0, 0, 240, 160);
@@ -806,16 +835,24 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
         txt("< >  chase target", 120, 80, "#fff");
         txt("RELEASE  stomp", 120, 94, "#fff");
       } else {
-        txt("THE SPIRITS WIN", 120, 46, "#ff8a7a");
-        txt("SCORE " + S.score, 120, 70, "#fff");
-        txt("BEST  " + best, 120, 84, "#ffd45a");
+        txt("TRAINING OVER", 120, 14, "#ff8a7a");
+        txt("SCORE " + S.score + "  BEST " + best, 120, 30, "#fff");
+        txt("XP EARNED +" + S.xp, 120, 50, "#78dcff");
+        const ri = rankOf(totalXP), next = RANKS[ri + 1];
+        txt((S.rankUp && (S.t >> 4) % 2 ? "RANK UP! " : "RANK ") + RANKS[ri][0], 120, 68, "#ffd45a");
+        g.fillStyle = "#0a0a14"; g.fillRect(60, 82, 120, 7);
+        const frac = next ? (totalXP - RANKS[ri][1]) / (next[1] - RANKS[ri][1]) : 1;
+        g.fillStyle = "#78dcff"; g.fillRect(60, 82, Math.round(120 * frac), 7);
+        g.strokeStyle = "#e8e2fa"; g.lineWidth = 1; g.strokeRect(59.5, 81.5, 121, 8);
+        txt(next ? (next[1] - totalXP) + " XP TO " + next[0] : "TOP RANK", 120, 94, "#fff");
+        txt("TOTAL XP " + totalXP, 120, 108, "#a49cc0");
       }
-      if ((S.t >> 5) % 2 === 0) txt("PRESS A", 120, 120, "#78dcff");
+      if ((S.t >> 5) % 2 === 0) txt("PRESS A", 120, S.mode === "over" ? 136 : 120, "#78dcff");
     }
   }
 
   // test hook, only when the page is opened with #debug
-  if (location.hash === "#debug") window.__ss = { spawn, startBoss, stompNow: (power, perfect) => { S.state = perfect ? "peak" : "rising"; S.power = power; if (perfect) { S.bal = S.tgt = 0; } stomp(); }, get S() { return S; } };
+  if (location.hash === "#debug") window.__ss = { spawn, startBoss, stompNow: (power, perfect) => { S.state = perfect ? "peak" : "rising"; S.power = power; if (perfect) { S.bal = S.tgt = 0; } stomp(); }, get S() { return S; }, get totalXP() { return totalXP; } };
 
   // title screen gets a few drifting wisps for atmosphere
   for (let i = 0; i < 5; i++) spawn("blue");

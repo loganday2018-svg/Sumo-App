@@ -24,3 +24,15 @@ Done so far: **1 (sound)**, **4 (wisp variety, plus golden wisps)**, **7 (boss w
 13. Purification glow: the ring brightens as spirits are cleared.
 
 Suggested next: 2 + 3 (hit-stop and ki aura), then 6 (fever mode).
+
+## Experience (done)
+
+Spirit Stomp is a training mini-game inside the larger sumo game. XP is its output.
+
+- XP per spirit = wave number x type (blue and tiny 1, big 2, oni mask 3).
+- A perfect-balance stomp doubles the XP of every spirit it clears.
+- Boss = 50 x boss number. Golden wisp = 5 flat.
+- XP carries over between runs and sets a training rank from Jonokuchi to Yokozuna.
+- When a run ends the page fires a `spiritstomp:result` event (also `window.spiritStompResult`)
+  with `{ xp, totalXP, rank, score, wave, perfectStomps, bossesBeaten }` for the main game to
+  turn into stat gains. How XP maps to stats is still open.
