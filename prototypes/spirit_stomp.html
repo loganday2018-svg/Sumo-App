@@ -91,8 +91,9 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   // ---------------- tuning
   const SETTINGS = [
     // key, label, min, max, step, unit, hint
-    ["startSpeed", "Target speed at start", 0.25, 3, 0.05, "×", "How fast the green target slides when you first raise the leg."],
-    ["speedUp", "Speed-up at full power", 1, 10, 0.25, "×", "How many times faster the target bounces once power is full."],
+    ["raiseTime", "Leg raise time", 0.2, 1.5, 0.05, "s", "How long the leg takes to rise before power starts charging."],
+    ["startSpeed", "Target speed at start", 0.3, 2.5, 0.05, "×", "How fast the green target bounces when the leg starts rising."],
+    ["speedUp", "Speed-up at full power", 1, 5, 0.1, "×", "How many times faster the target bounces once power is full."],
     ["targetSize", "Target size", 0.1, 0.8, 0.02, "", "Width of the green zone. The gauge runs from -1 to 1."],
     ["wobble", "Time off target before toppling", 0.3, 3, 0.1, "s", "How long the needle can be off target in total before he falls."],
     ["recover", "Recovery time", 0.5, 5, 0.1, "s", "How long being on target takes to fully drain the wobble bar."],
@@ -102,12 +103,12 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     ["spawnRate", "Wisp spawn rate", 0.4, 3, 0.05, "×", "How often new spirits appear."],
   ];
   const PRESETS = {
-    Easy:    { startSpeed: 0.6, speedUp: 3.5, targetSize: 0.44, wobble: 1.8, recover: 1.2, chargeTime: 1.8, steer: 1.3, wispSpeed: 0.75, spawnRate: 0.8 },
-    Default: { startSpeed: 1, speedUp: 6, targetSize: 0.32, wobble: 1, recover: 2, chargeTime: 2.2, steer: 1, wispSpeed: 1, spawnRate: 1 },
-    Hard:    { startSpeed: 1.4, speedUp: 8, targetSize: 0.24, wobble: 0.6, recover: 3, chargeTime: 2.6, steer: 0.9, wispSpeed: 1.3, spawnRate: 1.4 },
+    Easy:    { raiseTime: 0.5, startSpeed: 0.75, speedUp: 2, targetSize: 0.44, wobble: 1.8, recover: 1.2, chargeTime: 1.8, steer: 1.3, wispSpeed: 0.75, spawnRate: 0.8 },
+    Default: { raiseTime: 0.5, startSpeed: 1, speedUp: 2.5, targetSize: 0.32, wobble: 1, recover: 2, chargeTime: 2.2, steer: 1, wispSpeed: 1, spawnRate: 1 },
+    Hard:    { raiseTime: 0.5, startSpeed: 1.25, speedUp: 3, targetSize: 0.24, wobble: 0.6, recover: 3, chargeTime: 2.6, steer: 0.9, wispSpeed: 1.3, spawnRate: 1.4 },
   };
   const CFG = { ...PRESETS.Default };
-  try { Object.assign(CFG, JSON.parse(localStorage.getItem("spiritStompCfg") || "{}")); } catch (e) {}
+  try { Object.assign(CFG, JSON.parse(localStorage.getItem("spiritStompCfg2") || "{}")); } catch (e) {}
   const tuneEl = document.getElementById("tune"), outs = {};
   const fmt = (v, unit) => (+v).toFixed(2).replace(/\.?0+$/, "") + unit;
   SETTINGS.forEach(([k, label, min, max, step, unit, hint]) => {
@@ -119,7 +120,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     inp.addEventListener("input", () => { CFG[k] = +inp.value; showCfg(); saveCfg(); markPreset(); });
   });
   function showCfg() { for (const k in outs) { const [inp, out, unit] = outs[k]; inp.value = CFG[k]; out.textContent = fmt(CFG[k], unit); } }
-  function saveCfg() { try { localStorage.setItem("spiritStompCfg", JSON.stringify(CFG)); } catch (e) {} }
+  function saveCfg() { try { localStorage.setItem("spiritStompCfg2", JSON.stringify(CFG)); } catch (e) {} }
   const presetBtns = document.querySelectorAll("[data-preset]");
   function markPreset() {
     presetBtns.forEach(b => b.setAttribute("aria-pressed", String(Object.entries(PRESETS[b.dataset.preset]).every(([k, v]) => Math.abs(CFG[k] - v) < 1e-9))));
@@ -204,7 +205,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   // speed at zero power = startSpeed, at full power = startSpeed * speedUp
   function moveTarget() {
     const lim = 0.95 - CFG.targetSize / 2;
-    S.tgt += S.tdir * 0.0035 * CFG.startSpeed * (1 + (CFG.speedUp - 1) * S.power);
+    S.tgt += S.tdir * 0.011 * CFG.startSpeed * (1 + (CFG.speedUp - 1) * S.power);
     if (S.tgt > lim) { S.tgt = lim; S.tdir = -1; S.tbump = 6; }
     if (S.tgt < -lim) { S.tgt = -lim; S.tdir = 1; S.tbump = 6; }
     if (S.tbump > 0) S.tbump--;
@@ -253,7 +254,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       case "rising":
         moveTarget();
         if (!aDown) { stomp(); break; }
-        if (S.st >= 14) { S.state = "peak"; S.st = 0; }
+        if (S.st >= CFG.raiseTime * 60) { S.state = "peak"; S.st = 0; }
         break;
       case "peak": {
         S.power = Math.min(1, S.power + 1 / (CFG.chargeTime * 60));
@@ -311,7 +312,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
   }
   function frameIndex() {
     switch (S.state) {
-      case "rising": return S.st < 7 ? F.shift[S.side] : F.raise[S.side];
+      case "rising": return S.st < CFG.raiseTime * 60 * 0.45 ? F.shift[S.side] : F.raise[S.side];
       case "peak": case "topple": return S.state === "topple" && S.st > 24 ? F.settle : F.peak[S.side];
       case "stomp": return F.stomp;
       case "settle": return F.settle;
@@ -363,23 +364,29 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
       txt(String(S.score), 232, 15, "#fff", "right");
       // balance gauge (only while the leg is up): chase the moving green target
       if (S.state === "peak" || S.state === "rising") {
-        const mx = 120, my = 30, r = 20, ang = v => (270 + v * 70) * Math.PI / 180;
-        panel(mx - 26, 4, 52, 36);
-        for (let a = 200; a <= 340; a += 3) {
+        const mx = 120, my = 38, r = 28, ang = v => (270 + v * 70) * Math.PI / 180;
+        panel(mx - 34, 4, 68, 46);
+        // gauge band: dim track, bright green target zone, 3 px thick
+        for (let a = 198; a <= 342; a += 1.5) {
           const v = (a - 270) / 70, inT = Math.abs(v - S.tgt) <= CFG.targetSize / 2, rad = a * Math.PI / 180;
-          g.fillStyle = inT ? "#5adc78" : "#5a3a4a";
-          g.fillRect(Math.round(mx + Math.cos(rad) * r) - 1, Math.round(my + Math.sin(rad) * r) - 1, 2, 2);
-          if (inT) { g.fillStyle = "#3a9a50"; g.fillRect(Math.round(mx + Math.cos(rad) * (r - 3)), Math.round(my + Math.sin(rad) * (r - 3)), 1, 1); }
+          for (let k = 0; k < 3; k++) {
+            g.fillStyle = inT ? (k === 0 ? "#9dffb8" : k === 1 ? "#5adc78" : "#2f8a46") : (k === 1 ? "#4a3446" : "#3a2838");
+            g.fillRect(Math.round(mx + Math.cos(rad) * (r - k)), Math.round(my + Math.sin(rad) * (r - k)), 1, 1);
+          }
+        }
+        // end stops
+        for (const e of [-1, 1]) {
+          const ea = ang(e * 1.03); g.fillStyle = S.tbump > 0 && (S.tdir < 0 ? e > 0 : e < 0) ? "#ffffff" : "#8a7aa8";
+          g.fillRect(Math.round(mx + Math.cos(ea) * (r - 1)) - 1, Math.round(my + Math.sin(ea) * (r - 1)) - 2, 3, 4);
         }
         const hit = onTarget(), na = ang(S.bal);
-        g.strokeStyle = hit ? "#ffffff" : "#ff8a7a"; g.lineWidth = 1.5;
-        g.beginPath(); g.moveTo(mx, my); g.lineTo(mx + Math.cos(na) * (r - 2), my + Math.sin(na) * (r - 2)); g.stroke();
-        g.fillStyle = "#ffd45a"; g.fillRect(mx - 1, my - 1, 3, 3);
-        if (S.tbump > 0) { const ea = ang(S.tdir < 0 ? 1 : -1); g.fillStyle = "#ffffff"; g.fillRect(Math.round(mx + Math.cos(ea) * (r + 3)) - 1, Math.round(my + Math.sin(ea) * (r + 3)) - 1, 3, 3); }
+        g.strokeStyle = hit ? "#ffffff" : "#ff8a7a"; g.lineWidth = 2;
+        g.beginPath(); g.moveTo(mx, my); g.lineTo(mx + Math.cos(na) * (r - 4), my + Math.sin(na) * (r - 4)); g.stroke();
+        g.fillStyle = "#ffd45a"; g.fillRect(mx - 2, my - 2, 4, 4);
         // wobble bar under the gauge
-        g.fillStyle = "#0a0a14"; g.fillRect(mx - 20, 34, 40, 3);
+        g.fillStyle = "#0a0a14"; g.fillRect(mx - 28, 43, 56, 4);
         g.fillStyle = S.wob > .6 ? (S.t % 6 < 3 ? "#ff5a4a" : "#ffc83c") : "#e6463c";
-        g.fillRect(mx - 20, 34, Math.round(40 * Math.min(1, S.wob || 0)), 3);
+        g.fillRect(mx - 28, 43, Math.round(56 * Math.min(1, S.wob || 0)), 4);
       }
       txt("WAVE " + S.wave + "  " + S.cleared + "/" + S.need, 120, 150, "#78dcff");
     }
