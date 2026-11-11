@@ -95,7 +95,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     ["startSpeed", "Target speed at start", 0.3, 2.5, 0.05, "×", "How fast the green target bounces when the leg starts rising."],
     ["speedUp", "Speed-up at full power", 1, 5, 0.1, "×", "How many times faster the target bounces once power is full."],
     ["targetSize", "Target size", 0.1, 0.8, 0.02, "", "Width of the green zone. The gauge runs from -1 to 1."],
-    ["wobble", "Time off target before toppling", 0.3, 3, 0.1, "s", "How long the needle can be off target in total before he falls."],
+    ["wobble", "Time off target before toppling", 0.5, 5, 0.1, "s", "How long the needle can be off target in total before he falls."],
     ["recover", "Recovery time", 0.5, 5, 0.1, "s", "How long being on target takes to fully drain the wobble bar."],
     ["chargeTime", "Time to full power", 0.6, 5, 0.1, "s", "How long you hold A to fill the power bar."],
     ["steer", "Steering strength", 0.4, 2.5, 0.05, "×", "How quickly the needle responds to left and right."],
@@ -103,12 +103,12 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     ["spawnRate", "Wisp spawn rate", 0.4, 3, 0.05, "×", "How often new spirits appear."],
   ];
   const PRESETS = {
-    Easy:    { raiseTime: 0.5, startSpeed: 0.75, speedUp: 2, targetSize: 0.44, wobble: 1.8, recover: 1.2, chargeTime: 1.8, steer: 1.3, wispSpeed: 0.75, spawnRate: 0.8 },
-    Default: { raiseTime: 0.5, startSpeed: 1, speedUp: 2.5, targetSize: 0.32, wobble: 1, recover: 2, chargeTime: 2.2, steer: 1, wispSpeed: 1, spawnRate: 1 },
-    Hard:    { raiseTime: 0.5, startSpeed: 1.25, speedUp: 3, targetSize: 0.24, wobble: 0.6, recover: 3, chargeTime: 2.6, steer: 0.9, wispSpeed: 1.3, spawnRate: 1.4 },
+    Easy:    { raiseTime: 0.5, startSpeed: 0.75, speedUp: 2, targetSize: 0.44, wobble: 3.6, recover: 1.2, chargeTime: 1.8, steer: 1.3, wispSpeed: 0.75, spawnRate: 0.8 },
+    Default: { raiseTime: 0.5, startSpeed: 1, speedUp: 2.5, targetSize: 0.32, wobble: 2, recover: 2, chargeTime: 2.2, steer: 1, wispSpeed: 1, spawnRate: 1 },
+    Hard:    { raiseTime: 0.5, startSpeed: 1.25, speedUp: 3, targetSize: 0.24, wobble: 1.2, recover: 3, chargeTime: 2.6, steer: 0.9, wispSpeed: 1.3, spawnRate: 1.4 },
   };
   const CFG = { ...PRESETS.Default };
-  try { Object.assign(CFG, JSON.parse(localStorage.getItem("spiritStompCfg2") || "{}")); } catch (e) {}
+  try { Object.assign(CFG, JSON.parse(localStorage.getItem("spiritStompCfg3") || "{}")); } catch (e) {}
   const tuneEl = document.getElementById("tune"), outs = {};
   const fmt = (v, unit) => (+v).toFixed(2).replace(/\.?0+$/, "") + unit;
   SETTINGS.forEach(([k, label, min, max, step, unit, hint]) => {
@@ -120,7 +120,7 @@ kbd { font-family: var(--display); font-size: 9px; background: var(--btn); borde
     inp.addEventListener("input", () => { CFG[k] = +inp.value; showCfg(); saveCfg(); markPreset(); });
   });
   function showCfg() { for (const k in outs) { const [inp, out, unit] = outs[k]; inp.value = CFG[k]; out.textContent = fmt(CFG[k], unit); } }
-  function saveCfg() { try { localStorage.setItem("spiritStompCfg2", JSON.stringify(CFG)); } catch (e) {} }
+  function saveCfg() { try { localStorage.setItem("spiritStompCfg3", JSON.stringify(CFG)); } catch (e) {} }
   const presetBtns = document.querySelectorAll("[data-preset]");
   function markPreset() {
     presetBtns.forEach(b => b.setAttribute("aria-pressed", String(Object.entries(PRESETS[b.dataset.preset]).every(([k, v]) => Math.abs(CFG[k] - v) < 1e-9))));
