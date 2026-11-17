@@ -127,29 +127,39 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
         for (let i = 0; i < 3; i++) { g.fillStyle = i < s.hearts ? "#e0483c" : "#4a3a5a"; [".##.##.", "#######", "#######", ".#####.", "..###..", "...#..."].forEach((r, y) => [...r].forEach((c, x) => { if (c === "#") g.fillRect(204 + i * 10 + x, 6 + y, 1, 1); })); }
         txt("XP " + s.xp, 6, 6, "#78dcff", "left"); txt("COMBO " + s.combo, 6, 18, "#fff", "left"); txt("WAVE " + s.wave + "  " + s.cleared + "/" + s.need, 120, 148, "#78dcff"); } },
 
-    { name: "2 Rhythm Strikes", buttons: ["LEFT", "", "RIGHT"], how: "Notes slide toward the ring. Tap LEFT or RIGHT as each one lands. The beat keeps speeding up.",
-      init(s) { s.notes = []; s.next = 50; s.side = 0; s.score = 0; s.combo = 0; s.best = 0; s.beat = 38; s.time = 30 * 60; },
-      update(s) { s.beat = Math.max(17, 38 - (30 * 60 - s.time) / 80); if (--s.next <= 0) { s.notes.push({ side: s.side, x: -8 }); if (Math.random() > .22) s.side ^= 1; s.next = s.beat; }
-        const sp = 150 / (s.beat * 2.6); s.notes = s.notes.filter(n => { n.x += sp; if (n.x > 166) { s.combo = 0; pop("MISS", "#ff8a7a", 150, 130); sfx.miss(); return false; } return true; }); },
-      press(s, i) { if (i === 1) return; const side = i === 0 ? 0 : 1; strike(side ? 90 : 82); W.arm = side; let k = -1, bd = 99; s.notes.forEach((n, j) => { const d = Math.abs(n.x - 150); if (d < bd) { bd = d; k = j; } });
-        if (k < 0 || bd > 13 || s.notes[k].side !== side) { s.combo = 0; sfx.miss(); pop(k >= 0 && bd <= 13 ? "WRONG HAND" : "TOO EARLY", "#ff8a7a", 150, 130); return; }
-        s.notes.splice(k, 1); s.combo++; s.best = Math.max(s.best, s.combo); const perfect = bd < 5; s.score += (perfect ? 2 : 1) * (1 + (s.combo / 8 | 0)); perfect ? sfx.perfect() : sfx.hit(.4); shake(); pop(perfect ? "PERFECT" : "GOOD", perfect ? "#9dffb8" : "#ffd45a", 150, 130); },
-      draw(s) { drawPole(sh()); drawWrestler(); g.fillStyle = "rgba(20,10,10,.75)"; g.fillRect(0, 138, 240, 20); g.strokeStyle = "#ffd45a"; g.lineWidth = 2; g.beginPath(); g.arc(150, 148, 8, 0, 7); g.stroke();
-        s.notes.forEach(n => { g.fillStyle = n.side ? "#468cf0" : "#e6463c"; g.beginPath(); g.arc(n.x, 148, 6, 0, 7); g.fill(); txt(n.side ? "R" : "L", n.x, 144); });
-        txt("SCORE " + s.score, 6, 6, "#fff", "left"); txt("COMBO " + s.combo, 6, 18, "#78dcff", "left"); } },
+    { name: "2 Crack the Pole", buttons: ["", "STRIKE", ""], noTimer: true,
+      how: "A marker sweeps the bar. Strike while it is on the green to crack the pole; dead centre is a deep crack worth double. The green moves after every hit. A miss is a slip, and three slips end the set. Break five poles to finish.",
+      POLES: [{ name: "PINE", need: 6, c: "#8a5a32" }, { name: "CEDAR", need: 7, c: "#82522c" }, { name: "OAK", need: 8, c: "#7a4a26" }, { name: "IRON-BOUND", need: 9, c: "#6a4222", iron: true }, { name: "TEMPLE", need: 10, c: "#5a361c", iron: true }],
+      init(s) { s.pole = 0; s.cracks = 0; s.slips = 3; s.xp = 0; s.broken = 0; s.pos = 0; s.dir = 1; s.at = .5; s.time = 1e9; s.endT = -1; s.done = null; s.splinters = []; s.fall = null; s.flashT = 99; },
+      spec(s) { return this.POLES[Math.min(s.pole, this.POLES.length - 1)]; },
+      half(s) { return Math.max(.06, .13 - s.pole * .016); },
+      update(s) { s.flashT++; if (!s.fall && s.endT < 0) { const sp = .017 + s.pole * .0045; s.pos += s.dir * sp; if (s.pos > 1) { s.pos = 1; s.dir = -1; } if (s.pos < 0) { s.pos = 0; s.dir = 1; } }
+        s.splinters = s.splinters.filter(b => { b.x += b.vx; b.y += b.vy; b.vy += .15; return --b.life > 0; });
+        if (s.fall) { s.fall.t++; if (s.fall.t > 46) s.fall = null; }
+        if (s.endT >= 0 && ++s.endT > 60) s.time = 0; },
+      press(s, i) { if (i !== 1 || W.stun > 0 || s.fall || s.endT >= 0) return; const sp = this.spec(s), half = this.half(s), d = Math.abs(s.pos - s.at);
+        const splinter = (n, f) => { for (let k = 0; k < n; k++) s.splinters.push({ x: POLE_X + 2, y: 84 + Math.random() * 12, vx: -Math.random() * 2.2 * f, vy: -1 - Math.random() * 2 * f, life: 26, c: k % 2 ? "#d9b07a" : sp.c }); };
+        W.big = d <= half * .35; strike(86);
+        if (d <= half) { const deep = d <= half * .35, gain = (s.pole + 1) * (deep ? 2 : 1); s.cracks += deep ? 2 : 1; s.xp += gain; deep ? sfx.perfect() : sfx.hit(.6); sfx.crack(); shake(); splinter(deep ? 10 : 5, deep ? 1.3 : .9);
+          pop((deep ? "DEEP CRACK +" : "CRACK +") + gain + " XP", deep ? "#9dffb8" : "#ffd45a");
+          let nxt; do { nxt = .15 + Math.random() * .7; } while (Math.abs(nxt - s.at) < .2); s.at = nxt; s.flashT = 0;
+          if (s.cracks >= sp.need) { const bonus = (s.pole + 1) * 8; s.xp += bonus; s.broken++; s.fall = { t: 0, c: sp.c }; splinter(20, 1.8); sfx.win(); pop("POLE BROKEN! +" + bonus + " XP", "#9dffb8", 120, 112);
+            s.pole++; s.cracks = 0; s.at = .5; if (s.broken >= this.POLES.length) { s.done = "win"; s.endT = 0; } } }
+        else { s.slips--; W.stun = 20; sfx.bad(); pop(s.slips > 0 ? "SLIP! " + s.slips + " LEFT" : "SLIPPED OUT", "#ff8a7a"); if (s.slips <= 0) { s.done = "slips"; s.endT = 0; } } },
+      draw(s) { const sp = this.spec(s), half = this.half(s);
+        if (s.fall) { const t = s.fall.t, a = Math.min(1.4, t * t * .002); g.save(); g.translate(POLE_X + 6, 74); g.rotate(a); g.globalAlpha = Math.max(0, 1 - t / 46); g.fillStyle = s.fall.c; g.fillRect(-6, -35, 12, 35); g.restore(); g.globalAlpha = 1; }
+        if (!s.fall || s.fall.t > 20) { g.globalAlpha = s.fall ? (s.fall.t - 20) / 26 : 1; drawPole(sh(), Math.round(s.cracks / sp.need * 14)); if (sp.iron) { g.fillStyle = "#4a5260"; for (const y of [50, 108]) g.fillRect(POLE_X - 1, y, 14, 3); g.fillStyle = "#8a96a8"; for (const y of [50, 108]) g.fillRect(POLE_X - 1, y, 14, 1); } g.globalAlpha = 1; }
+        s.splinters.forEach(b => { g.fillStyle = b.c; g.fillRect(Math.round(b.x), Math.round(b.y), 2, 1); });
+        drawWrestler();
+        const x = 40, w = 160, y = 136; g.fillStyle = "#0a0a14"; g.fillRect(x, y, w, 12);
+        const bx = x + w * (s.at - half), bw = w * half * 2; g.fillStyle = s.flashT < 8 ? "#ffffff" : "#2f7a3a"; g.fillRect(bx, y, bw, 12);
+        g.fillStyle = "#9dffb8"; g.fillRect(x + w * (s.at - half * .35), y, w * half * .7, 12);
+        g.fillStyle = "#fff"; g.fillRect(Math.round(x + w * s.pos) - 1, y - 3, 3, 18); g.strokeStyle = "#e8e2fa"; g.lineWidth = 1; g.strokeRect(x - .5, y - .5, w + 1, 13);
+        txt("XP " + s.xp, 6, 6, "#78dcff", "left"); txt(sp.name + "  " + Math.min(s.broken + 1, 5) + "/5", 6, 18, "#ffd45a", "left");
+        bar(150, 20, 70, 5, s.cracks / sp.need, "#ffaa28"); txt("CRACKS", 150, 8, "#a49cc0", "left");
+        for (let k = 0; k < 3; k++) { g.fillStyle = k < s.slips ? "#ffd45a" : "#3a3048"; g.fillRect(228 - k * 8, 8, 6, 6); } } },
 
-    { name: "3 Crack the Pole", buttons: ["", "STRIKE", ""], how: "A marker sweeps the bar. Strike while it is in the green to crack the pole. A sloppy hit heals a crack. Break it before time runs out.",
-      init(s) { s.pos = 0; s.dir = 1; s.cracks = 0; s.need = 10; s.broken = 0; s.time = 30 * 60; s.breakT = 99; },
-      update(s) { s.breakT++; const sp = .016 + s.broken * .004 + s.cracks * .0006; s.pos += s.dir * sp; if (s.pos > 1) { s.pos = 1; s.dir = -1; } if (s.pos < 0) { s.pos = 0; s.dir = 1; } },
-      press(s, i) { if (i !== 1) return; strike(); const half = Math.max(.07, .13 - s.broken * .015), d = Math.abs(s.pos - .5);
-        if (d <= half) { const perfect = d < half * .35; s.cracks += perfect ? 2 : 1; perfect ? sfx.perfect() : sfx.hit(.6); sfx.crack(); shake(); pop(perfect ? "DEEP CRACK!" : "CRACK", perfect ? "#9dffb8" : "#ffd45a");
-          if (s.cracks >= s.need) { s.broken++; s.cracks = 0; s.need += 4; s.breakT = 0; s.time += 8 * 60; sfx.win(); pop("POLE BROKEN! +8s", "#9dffb8", 120, 30); } }
-        else { s.cracks = Math.max(0, s.cracks - 1); sfx.miss(); pop("SLOPPY", "#ff8a7a"); } },
-      draw(s) { if (s.breakT < 40) { g.globalAlpha = s.breakT / 40; } drawPole(sh(), s.cracks); g.globalAlpha = 1; drawWrestler();
-        const half = Math.max(.07, .13 - s.broken * .015), x = 60, w = 120; g.fillStyle = "#0a0a14"; g.fillRect(x, 140, w, 10); g.fillStyle = "#2f7a3a"; g.fillRect(x + w * (.5 - half), 140, w * half * 2, 10); g.fillStyle = "#9dffb8"; g.fillRect(x + w * (.5 - half * .35), 140, w * half * .7, 10); g.fillStyle = "#fff"; g.fillRect(Math.round(x + w * s.pos) - 1, 137, 3, 16);
-        txt("POLES " + s.broken, 6, 6, "#fff", "left"); txt("CRACKS", 6, 18, "#ffd45a", "left"); bar(6, 28, 50, 5, s.cracks / s.need, "#ffaa28"); } },
-
-    { name: "4 Charge + Thrust", buttons: ["", "HOLD", ""], noTimer: true,
+    { name: "3 Charge + Thrust", buttons: ["", "HOLD", ""], noTimer: true,
       how: "Hold to wind up, let go inside the gold band for a heavy thrust. Dead centre of the band is a PERFECT: double damage and double XP. Every thrust you land in a row shrinks the band but raises the multiplier. Hold too long and you whiff. Later poles are tougher, and from pole 3 the band drifts. You get 12 thrusts per set.",
       POLES: [{ name: "PINE", hp: 10, c: "#8a5a32" }, { name: "OAK", hp: 14, c: "#7a4a26" }, { name: "IRON-BOUND", hp: 18, c: "#6a4222", iron: true }, { name: "TEMPLE", hp: 24, c: "#5a361c", iron: true }],
       init(s) { s.power = 0; s.held = false; s.pole = 0; s.hp = this.POLES[0].hp; s.max = s.hp; s.streak = 0; s.best = 0; s.broken = 0; s.xp = 0; s.time = 1e9; s.thrusts = 12; s.endT = -1; s.drift = 0; s.splinters = []; s.fall = null; W.pull = 0; },
@@ -185,7 +195,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
         for (let k = 0; k < 12; k++) { g.fillStyle = k < s.thrusts ? "#ffd45a" : "#3a3048"; g.fillRect(226 - (k % 12) * 7, 6 + (k / 12 | 0) * 7, 5, 5); }
         txt(sp.name, 196, 134, "#ffd45a"); bar(162, 146, 68, 5, s.hp / s.max, "#e0402a"); } },
 
-    { name: "5 Oni Pole", buttons: ["LEFT", "", "RIGHT"], how: "Alternate LEFT and RIGHT to drive the oni back. When its eyes flash white it is about to shove: stop striking until it passes, or you get thrown back.",
+    { name: "4 Oni Pole", buttons: ["LEFT", "", "RIGHT"], how: "Alternate LEFT and RIGHT to drive the oni back. When its eyes flash white it is about to shove: stop striking until it passes, or you get thrown back.",
       init(s) { s.pos = .5; s.last = -1; s.lvl = 1; s.phase = 0; s.pt = 150; s.time = 40 * 60; s.wins = 0; },
       update(s) { s.pos -= .0012 + s.lvl * .0004; if (--s.pt <= 0) { s.phase = (s.phase + 1) % 3; s.pt = s.phase === 0 ? 110 + Math.random() * 90 : s.phase === 1 ? Math.max(22, 44 - s.lvl * 4) : 34; if (s.phase === 1) tone(880, .1, .08); if (s.phase === 2) { s.hitInShove = false; tone(140, .3, .2, "sawtooth", 70); } if (s.phase === 0 && s.hitInShove === false) { s.pos += .05; pop("ONI TIRES", "#9dffb8"); } }
         if (s.pos >= 1) { s.wins++; s.lvl++; s.pos = .5; s.time += 10 * 60; sfx.win(); pop("ONI DRIVEN BACK! +10s", "#9dffb8", 120, 30); }
@@ -221,7 +231,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   function draw() { g.drawImage(bg, 0, 0); const gm = GAMES[cur]; gm.draw(S);
     if (mode === "play") { if (!gm.noTimer) txt(Math.ceil(S.time / 60) + "s", 234, 18, S.time < 300 ? "#ff8a7a" : "#fff", "right"); g.font = FONT; pops.forEach(p => { const half = g.measureText(p.s).width / 2 + 2; txt(p.s, Math.max(half, Math.min(240 - half, p.x)), p.y - p.t * .3, p.c); }); }
     else { g.fillStyle = "rgba(14,10,28,.7)"; g.fillRect(0, 0, 240, 160); txt(gm.name.slice(2).toUpperCase(), 120, 44, "#ffd45a");
-      if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 3 ? "XP " + S.xp + "  POLES " + S.broken : cur === 2 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt(cur === 0 ? "POSSESSED!" : cur === 3 ? "OUT OF THRUSTS" : "TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
+      if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 1 || cur === 2 ? "XP " + S.xp + "  POLES " + S.broken : cur === 3 ? "ONI BEATEN " + S.wins : "SCORE " + S.score;
+        const head = cur === 0 ? "POSSESSED!" : cur === 1 ? (S.done === "win" ? "SET COMPLETE!" : "SLIPPED OUT") : cur === 2 ? "OUT OF THRUSTS" : "TIME!";
+        txt(head, 120, 66, cur === 1 && S.done === "win" ? "#9dffb8" : "#ff8a7a"); txt(r, 120, 82, "#fff"); }
       if ((tick >> 5) % 2 === 0) txt(mode === "over" ? "TAP TO RETRY" : "TAP TO START", 120, 110, "#78dcff"); } }
   let last = performance.now(), acc = 0;
   function loop(now) { acc += Math.min(200, now - last); last = now; while (acc >= 1000 / 60) { acc -= 1000 / 60; update(); } draw(); requestAnimationFrame(loop); }
