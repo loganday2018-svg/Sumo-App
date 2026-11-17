@@ -1,0 +1,66 @@
+<title>Sumo RPG Walk Test</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  :root { --bg: #111; --pad: rgba(40, 36, 64, .72); --edge: rgba(232, 226, 250, .55); --on: #ffd45a; --fg: #ece8f6; color-scheme: dark; }
+  html, body { margin: 0; padding: 0; background: var(--bg); height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body { padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #game { display: flex; align-items: center; justify-content: center; height: 100%; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+  /* touch pad: only on touch screens, laid over the bottom corners */
+  .touch { position: fixed; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: none; gap: 8px; touch-action: none; z-index: 5; }
+  @media (pointer: coarse) { .touch { display: grid; } }
+  .dpad { left: calc(14px + env(safe-area-inset-left, 0px)); grid-template-columns: repeat(3, 52px); grid-template-rows: repeat(3, 52px); gap: 2px; }
+  .acts { right: calc(14px + env(safe-area-inset-right, 0px)); grid-template-columns: repeat(2, 64px); grid-template-rows: 30px 64px; gap: 10px 12px; }
+  .touch button { opacity: .85; font: 600 15px system-ui, sans-serif; color: var(--fg); background: var(--pad); border: 2px solid var(--edge); border-radius: 12px; touch-action: none; padding: 0; }
+  .touch button.on { background: var(--on); color: #1c1830; border-color: var(--on); }
+  .dpad .u { grid-area: 1 / 2; } .dpad .l { grid-area: 2 / 1; } .dpad .r { grid-area: 2 / 3; } .dpad .d { grid-area: 3 / 2; }
+  .acts .z, .acts .x { border-radius: 50%; font-size: 18px; }
+  .acts .z { grid-area: 2 / 2; } .acts .x { grid-area: 2 / 1; }
+  .acts .m { grid-area: 1 / 1 / 2 / 3; border-radius: 999px; font-size: 12px; }
+  .hint { position: fixed; top: calc(8px + env(safe-area-inset-top, 0px)); left: 0; right: 0; text-align: center; font: 12px system-ui, sans-serif; color: #a49cc0; display: none; pointer-events: none; }
+  @media (pointer: coarse) and (orientation: portrait) { .hint { display: block; } }
+</style>
+<link rel="modulepreload" crossorigin href="assets/phaser-CTbIuaw5.js">
+<div id="game"></div>
+<p class="hint">Turn your phone sideways for a bigger screen.</p>
+<div class="touch dpad" aria-label="Direction pad">
+  <button class="u" data-key="ArrowUp" aria-label="Up">&#9650;</button>
+  <button class="l" data-key="ArrowLeft" aria-label="Left">&#9664;</button>
+  <button class="r" data-key="ArrowRight" aria-label="Right">&#9654;</button>
+  <button class="d" data-key="ArrowDown" aria-label="Down">&#9660;</button>
+</div>
+<div class="touch acts" aria-label="Buttons">
+  <button class="m" data-key="Enter" aria-label="Menu">MENU</button>
+  <button class="x" data-key="KeyX" aria-label="X: back or run">X</button>
+  <button class="z" data-key="KeyZ" aria-label="Z: talk or confirm">Z</button>
+</div>
+<script>
+  // On-screen pad for phones: each button sends the same key events the
+  // keyboard would, with both the key code the game reads and the numeric
+  // code Phaser's key objects read.
+  (() => {
+    const KEYS = {
+      ArrowUp: ["ArrowUp", 38], ArrowDown: ["ArrowDown", 40], ArrowLeft: ["ArrowLeft", 37], ArrowRight: ["ArrowRight", 39],
+      KeyZ: ["z", 90], KeyX: ["x", 88], Enter: ["Enter", 13],
+    };
+    const send = (type, code) => {
+      const [key, keyCode] = KEYS[code];
+      const ev = new KeyboardEvent(type, { key, code, bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "keyCode", { get: () => keyCode });
+      Object.defineProperty(ev, "which", { get: () => keyCode });
+      window.dispatchEvent(ev);
+    };
+    document.querySelectorAll(".touch button").forEach(btn => {
+      const code = btn.dataset.key;
+      let down = false;
+      const press = e => { e.preventDefault(); if (down) return; down = true; btn.classList.add("on"); btn.setPointerCapture?.(e.pointerId); send("keydown", code); };
+      const lift = () => { if (!down) return; down = false; btn.classList.remove("on"); send("keyup", code); };
+      btn.addEventListener("pointerdown", press);
+      ["pointerup", "pointercancel", "lostpointercapture"].forEach(t => btn.addEventListener(t, lift));
+      btn.addEventListener("contextmenu", e => e.preventDefault());
+    });
+    // a double-tap anywhere should never zoom the page
+    document.addEventListener("dblclick", e => e.preventDefault(), { passive: false });
+  })();
+</script>
+<script type="module" crossorigin src="assets/index-CkwyQ6h8.js"></script>
