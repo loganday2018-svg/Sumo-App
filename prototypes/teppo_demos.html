@@ -67,7 +67,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   const bg = document.createElement("canvas"); bg.width = 240; bg.height = 160;
   (() => { const b = bg.getContext("2d"); b.fillStyle = "#7d8aa0"; b.fillRect(0, 0, 240, 96); b.fillStyle = "#5d6a80"; for (let x = 0; x < 240; x += 24) b.fillRect(x, 0, 2, 96); b.fillStyle = "#4a3a2a"; b.fillRect(0, 92, 240, 6); b.fillStyle = "#c4a06e"; b.fillRect(0, 98, 240, 62); b.fillStyle = "#b89464"; for (let y = 100; y < 160; y += 4) for (let x = (y * 7) % 9; x < 240; x += 9) b.fillRect(x, y, 1, 1); })();
   function txt(s, x, y, c = "#fff", align = "center") { g.font = FONT; g.textAlign = align; g.textBaseline = "top"; g.fillStyle = "#140a14"; g.fillText(s, x + 1, y + 1); g.fillStyle = c; g.fillText(s, x, y); }
-  const W = { hitT: 99, arm: 0, armY: 0, stun: 0 };
+  const W = { hitT: 99, arm: 0, armY: 0, stun: 0, pull: 0, big: false };
   function strike(height) { W.hitT = 0; W.arm ^= 1; W.armY = height == null ? (W.arm ? 82 : 90) : height; }
   function drawPole(shake = 0, cracks = 0, oni = null) {
     const x = POLE_X + shake;
@@ -78,10 +78,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     if (oni) { const y = 50; g.fillStyle = "#3a0a0a"; g.fillRect(x - 5, y - 2, 22, 22); g.fillStyle = oni.angry ? "#ff5a3a" : "#d8402a"; g.fillRect(x - 4, y - 1, 20, 20); g.fillStyle = "#ffd23b"; g.fillRect(x - 5, y - 8, 3, 7); g.fillRect(x + 14, y - 8, 3, 7); g.fillStyle = oni.glow ? "#ffffff" : "#ffe680"; g.fillRect(x - 1, y + 5, 5, 3); g.fillRect(x + 8, y + 5, 5, 3); g.fillStyle = "#2a0a0a"; g.fillRect(x - 2, y + 3, 7, 1); g.fillRect(x + 7, y + 3, 7, 1); g.fillRect(x, y + 12, 12, 4); g.fillStyle = "#fff"; g.fillRect(x + 1, y + 12, 2, 2); g.fillRect(x + 9, y + 12, 2, 2); }
   }
   function drawWrestler() {
-    const lunge = W.hitT < 6 ? 5 : W.hitT < 10 ? 2 : 0, wob = W.stun > 0 ? ((W.stun >> 1) % 2 ? 2 : -2) : 0;
+    const lunge = W.hitT < 6 ? (W.big ? 9 : 5) : W.hitT < 10 ? 2 : 0, wob = W.stun > 0 ? ((W.stun >> 1) % 2 ? 2 : -2) : 0;
+    const pull = W.hitT < 10 ? 0 : -Math.round(W.pull * 7) + (W.pull > .85 ? (W.hitT % 4 < 2 ? 1 : -1) : 0);
     g.fillStyle = "rgba(60,36,20,.45)"; g.beginPath(); g.ellipse(WX + 32, GROUND, 20, 5, 0, 0, 7); g.fill();
-    g.drawImage(sheet, (W.hitT < 10 ? 1 : 0) * 64, 3 * 64, 64, 64, WX + lunge + wob - (W.stun > 0 ? 4 : 0), WY, 64, 64);
-    if (W.hitT < 8) { const x0 = WX + lunge + 44, y = W.armY; g.fillStyle = "#1f1420"; g.fillRect(x0, y - 1, POLE_X - x0 + 1, 7); g.fillStyle = "#f2b48a"; g.fillRect(x0, y, POLE_X - x0 - 5, 5); g.fillStyle = "#ffd9b8"; g.fillRect(x0, y, POLE_X - x0 - 5, 2); g.fillStyle = "#f2b48a"; g.fillRect(POLE_X - 6, y - 3, 5, 10); g.fillStyle = "#ffd9b8"; g.fillRect(POLE_X - 6, y - 3, 2, 10); }
+    g.drawImage(sheet, (W.hitT < 10 || W.pull > 0 ? 1 : 0) * 64, 3 * 64, 64, 64, WX + lunge + wob + pull - (W.stun > 0 ? 4 : 0), WY, 64, 64);
+    if (W.hitT < 8) { const x0 = WX + lunge + 44, y = W.armY; g.fillStyle = "#1f1420"; g.fillRect(x0, y - 1, POLE_X - x0 + 1, 7); g.fillStyle = "#f2b48a"; g.fillRect(x0, y, POLE_X - x0 - 5, 5); g.fillStyle = "#ffd9b8"; g.fillRect(x0, y, POLE_X - x0 - 5, 2); g.fillStyle = "#f2b48a"; g.fillRect(POLE_X - 6, y - 3, 5, 10); g.fillStyle = "#ffd9b8"; g.fillRect(POLE_X - 6, y - 3, 2, 10);
+      if (W.big && W.hitT < 5) { g.fillStyle = "rgba(255,255,255,.85)"; for (let k = 0; k < 4; k++) g.fillRect(POLE_X - 14 - k * 9, y - 6 + k * 5, 7, 1); } }
   }
   function bar(x, y, w, h, frac, col) { g.fillStyle = "#0a0a14"; g.fillRect(x, y, w, h); g.fillStyle = col; g.fillRect(x, y, Math.round(w * Math.max(0, Math.min(1, frac))), h); g.strokeStyle = "#e8e2fa"; g.lineWidth = 1; g.strokeRect(x - .5, y - .5, w + 1, h + 1); }
   const pops = []; const pop = (s, c = "#ffd45a", x = 120, y = 44) => { for (let i = pops.length - 1; i >= 0; i--) if (pops[i].x === x && pops[i].y === y) pops.splice(i, 1); pops.push({ s, c, x, y, t: 0 }); };
@@ -147,20 +149,38 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
         const half = Math.max(.07, .13 - s.broken * .015), x = 60, w = 120; g.fillStyle = "#0a0a14"; g.fillRect(x, 140, w, 10); g.fillStyle = "#2f7a3a"; g.fillRect(x + w * (.5 - half), 140, w * half * 2, 10); g.fillStyle = "#9dffb8"; g.fillRect(x + w * (.5 - half * .35), 140, w * half * .7, 10); g.fillStyle = "#fff"; g.fillRect(Math.round(x + w * s.pos) - 1, 137, 3, 16);
         txt("POLES " + s.broken, 6, 6, "#fff", "left"); txt("CRACKS", 6, 18, "#ffd45a", "left"); bar(6, 28, 50, 5, s.cracks / s.need, "#ffaa28"); } },
 
-    { name: "4 Charge + Thrust", buttons: ["", "HOLD", ""], how: "Hold to wind up, release inside the gold band for a heavy thrust. The band shrinks every time you land one. Hold too long and you whiff.",
-      init(s) { s.power = 0; s.held = false; s.hp = 14; s.max = 14; s.streak = 0; s.broken = 0; s.time = 30 * 60; },
-      band(s) { const w = Math.max(.07, .24 - s.streak * .03); return [.93 - w, .93]; },
-      update(s) { if (s.held) { s.power += 1 / 70; if (s.power >= 1.12) { s.held = false; s.power = 0; s.streak = 0; W.stun = 30; sfx.bad(); pop("WHIFF!", "#ff8a7a"); } } },
-      press(s, i) { if (i === 1 && W.stun <= 0) { s.held = true; s.power = 0; } },
-      release(s, i) { if (i !== 1 || !s.held) return; s.held = false; const p = s.power, [lo, hi] = this.band(s); s.power = 0; strike(86);
-        if (p >= lo && p <= hi) { s.hp -= 4; s.streak++; sfx.perfect(); shake(); pop("HEAVY THRUST!", "#9dffb8"); }
-        else if (p > hi) { s.streak = 0; W.stun = 20; sfx.bad(); pop("OVERSHOT", "#ff8a7a"); }
-        else { s.streak = 0; if (p > .3) { s.hp -= 1; sfx.hit(p); pop("LIGHT", "#ffd45a"); } else { sfx.miss(); pop("TOO SOFT", "#ff8a7a"); } }
-        if (s.hp <= 0) { s.broken++; s.max += 4; s.hp = s.max; s.time += 8 * 60; sfx.win(); pop("POLE BROKEN! +8s", "#9dffb8", 120, 30); } },
-      draw(s) { drawPole(sh(), Math.round((1 - s.hp / s.max) * 12)); drawWrestler(); const [lo, hi] = this.band(s), x = 14, y = 40, h = 80;
-        g.fillStyle = "#0a0a14"; g.fillRect(x, y, 12, h); g.fillStyle = "#b8860b"; g.fillRect(x, y + h * (1 - hi), 12, h * (hi - lo)); g.fillStyle = "#ffd45a"; g.fillRect(x, y + h * (1 - hi), 12, 2);
-        const p = Math.min(1, s.power); g.fillStyle = s.power > hi ? "#e6463c" : "#6fbf4a"; g.fillRect(x + 3, y + h * (1 - p), 6, h * p); g.strokeStyle = "#e8e2fa"; g.strokeRect(x - .5, y - .5, 13, h + 1);
-        txt("POLES " + s.broken, 6, 6, "#fff", "left"); txt("POLE", 150, 6, "#ffd45a", "left"); bar(184, 7, 50, 5, s.hp / s.max, "#e0402a"); txt("STREAK " + s.streak, 6, 18, "#78dcff", "left"); } },
+    { name: "4 Charge + Thrust", buttons: ["", "HOLD", ""],
+      how: "Hold to wind up, let go inside the gold band for a heavy thrust. Dead centre of the band is a PERFECT: double damage and double XP. Every thrust you land in a row shrinks the band but raises the multiplier. Hold too long and you whiff. Later poles are tougher, and from pole 3 the band drifts.",
+      POLES: [{ name: "PINE", hp: 10, c: "#8a5a32" }, { name: "OAK", hp: 14, c: "#7a4a26" }, { name: "IRON-BOUND", hp: 18, c: "#6a4222", iron: true }, { name: "TEMPLE", hp: 24, c: "#5a361c", iron: true }],
+      init(s) { s.power = 0; s.held = false; s.pole = 0; s.hp = this.POLES[0].hp; s.max = s.hp; s.streak = 0; s.best = 0; s.broken = 0; s.xp = 0; s.time = 40 * 60; s.drift = 0; s.splinters = []; s.fall = null; W.pull = 0; },
+      spec(s) { return this.POLES[Math.min(s.pole, this.POLES.length - 1)]; },
+      band(s) { const w = Math.max(.06, .26 - s.streak * .025), mid = .78 + (s.pole >= 2 ? Math.sin(s.drift) * .1 : 0); return [mid - w / 2, mid + w / 2]; },
+      update(s) { if (s.pole >= 2) s.drift += .03 + .01 * (s.pole - 2);
+        if (s.held) { s.power += 1 / 72; W.pull = Math.min(1, s.power);
+          if (s.power >= 1.06) { s.held = false; s.power = 0; W.pull = 0; s.streak = 0; W.stun = 34; sfx.bad(); pop("WHIFF! OFF BALANCE", "#ff8a7a"); } }
+        s.splinters = s.splinters.filter(b => { b.x += b.vx; b.y += b.vy; b.vy += .15; return --b.life > 0; });
+        if (s.fall) { s.fall.t++; if (s.fall.t > 46) s.fall = null; } },
+      press(s, i) { if (i === 1 && W.stun <= 0 && !s.fall) { s.held = true; s.power = 0; } },
+      release(s, i) { if (i !== 1 || !s.held) return; s.held = false; const p = s.power, [lo, hi] = this.band(s), mid = (lo + hi) / 2, half = (hi - lo) / 2; s.power = 0; W.pull = 0;
+        const sp = this.spec(s), splinter = (n, f) => { for (let k = 0; k < n; k++) s.splinters.push({ x: POLE_X + 2, y: 86 + Math.random() * 10, vx: -Math.random() * 2.5 * f, vy: -1 - Math.random() * 2 * f, life: 28, c: k % 2 ? "#d9b07a" : sp.c }); };
+        if (p >= lo && p <= hi) { const perfect = Math.abs(p - mid) <= half * .35; s.streak++; s.best = Math.max(s.best, s.streak);
+          const mult = 1 + Math.floor(s.streak / 3) * .5, dmg = Math.round((perfect ? 4 : 2) * mult * (sp.iron && !perfect ? .5 : 1)), gain = Math.round((s.pole + 1) * (perfect ? 2 : 1) * mult);
+          s.hp -= dmg; s.xp += gain; W.big = true; strike(86); shakeT = -4; perfect ? sfx.perfect() : sfx.hit(.8); splinter(perfect ? 12 : 7, perfect ? 1.4 : 1);
+          pop((perfect ? "PERFECT! " : "HEAVY ") + "+" + gain + " XP", perfect ? "#9dffb8" : "#ffd45a"); if (mult > 1) pop("x" + mult + " STREAK", "#78dcff", 120, 56); }
+        else if (p > hi) { s.streak = 0; W.big = false; strike(86); W.stun = 24; sfx.bad(); pop("OVERSHOT", "#ff8a7a"); }
+        else { s.streak = 0; W.big = false; strike(86); if (p > .35) { s.hp -= sp.iron ? 0 : 1; sfx.hit(p * .6); pop(sp.iron ? "CLANG. TOO LIGHT" : "LIGHT TAP", "#ffd45a"); } else { sfx.miss(); pop("TOO SOFT", "#ff8a7a"); } }
+        if (s.hp <= 0) { const gain = (s.pole + 1) * 10; s.xp += gain; s.broken++; s.fall = { t: 0, c: sp.c }; splinter(20, 1.8); s.pole++; s.hp = s.max = this.spec(s).hp; s.time += 6 * 60; sfx.win(); pop("POLE BROKEN! +" + gain + " XP", "#9dffb8", 120, 112); } },
+      draw(s) { const sp = this.spec(s), [lo, hi] = this.band(s), mid = (lo + hi) / 2, half = (hi - lo) / 2;
+        if (s.fall) { const t = s.fall.t, a = Math.min(1.4, t * t * .002); g.save(); g.translate(POLE_X + 6, 74); g.rotate(a); g.globalAlpha = Math.max(0, 1 - t / 46); g.fillStyle = s.fall.c; g.fillRect(-6, -35, 12, 35); g.restore(); g.globalAlpha = 1; }
+        if (!s.fall || s.fall.t > 20) { g.globalAlpha = s.fall ? (s.fall.t - 20) / 26 : 1; drawPole(sh(), Math.round((1 - s.hp / s.max) * 14)); if (sp.iron) { g.fillStyle = "#4a5260"; for (const y of [50, 108]) g.fillRect(POLE_X - 1, y, 14, 3); g.fillStyle = "#8a96a8"; for (const y of [50, 108]) g.fillRect(POLE_X - 1, y, 14, 1); } g.globalAlpha = 1; }
+        s.splinters.forEach(b => { g.fillStyle = b.c; g.fillRect(Math.round(b.x), Math.round(b.y), 2, 1); });
+        drawWrestler();
+        const x = 14, y = 40, h = 84; g.fillStyle = "#0a0a14"; g.fillRect(x, y, 14, h);
+        g.fillStyle = "#b8860b"; g.fillRect(x, y + h * (1 - hi), 14, h * (hi - lo)); g.fillStyle = "#ffd45a"; g.fillRect(x, y + h * (1 - mid - half * .35), 14, Math.max(2, h * half * .7));
+        const p = Math.min(1, s.power); g.fillStyle = s.power > hi ? "#e6463c" : s.power >= lo ? "#ffffff" : "#6fbf4a"; g.fillRect(x + 4, y + h * (1 - p), 6, h * p);
+        g.strokeStyle = "#e8e2fa"; g.lineWidth = 1; g.strokeRect(x - .5, y - .5, 15, h + 1); txt("PWR", x + 7, y + h + 4, "#a49cc0");
+        txt("XP " + s.xp, 36, 6, "#78dcff", "left"); txt("STREAK " + s.streak, 36, 18, "#fff", "left");
+        txt(sp.name, 196, 134, "#ffd45a"); bar(162, 146, 68, 5, s.hp / s.max, "#e0402a"); } },
 
     { name: "5 Oni Pole", buttons: ["LEFT", "", "RIGHT"], how: "Alternate LEFT and RIGHT to drive the oni back. When its eyes flash white it is about to shove: stop striking until it passes, or you get thrown back.",
       init(s) { s.pos = .5; s.last = -1; s.lvl = 1; s.phase = 0; s.pt = 150; s.time = 40 * 60; s.wins = 0; },
@@ -174,7 +194,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
         g.fillStyle = "#0a0a14"; g.fillRect(40, 142, 160, 8); g.fillStyle = "#e0402a"; g.fillRect(40 + 160 * s.pos, 142, 160 * (1 - s.pos), 8); g.fillStyle = "#6fbf4a"; g.fillRect(40, 142, 160 * Math.max(0, s.pos), 8); g.fillStyle = "#fff"; g.fillRect(40 + Math.round(160 * s.pos) - 1, 139, 3, 14);
         txt("YOU", 36, 142, "#9dffb8", "right"); txt("ONI", 204, 142, "#ff8a7a", "left"); txt("LEVEL " + s.lvl, 6, 6, "#fff", "left"); if (s.phase === 1) txt("!", POLE_X + 6, 32, "#fff"); } },
   ];
-  const sh = () => shakeT < 5 ? (shakeT % 2 ? 2 : -1) : 0;
+  const sh = () => shakeT < 0 ? (shakeT % 2 ? 4 : -3) : shakeT < 5 ? (shakeT % 2 ? 2 : -1) : 0;
 
   // ---- runner
   let cur = 0, S = {}, mode = "title", tick = 0;
@@ -198,7 +218,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   function draw() { g.drawImage(bg, 0, 0); const gm = GAMES[cur]; gm.draw(S);
     if (mode === "play") { if (!gm.noTimer) txt(Math.ceil(S.time / 60) + "s", 234, 18, S.time < 300 ? "#ff8a7a" : "#fff", "right"); g.font = FONT; pops.forEach(p => { const half = g.measureText(p.s).width / 2 + 2; txt(p.s, Math.max(half, Math.min(240 - half, p.x)), p.y - p.t * .3, p.c); }); }
     else { g.fillStyle = "rgba(14,10,28,.7)"; g.fillRect(0, 0, 240, 160); txt(gm.name.slice(2).toUpperCase(), 120, 44, "#ffd45a");
-      if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 2 || cur === 3 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt(gm.noTimer ? "POSSESSED!" : "TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
+      if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 3 ? "XP " + S.xp + "  POLES " + S.broken : cur === 2 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt(gm.noTimer ? "POSSESSED!" : "TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
       if ((tick >> 5) % 2 === 0) txt(mode === "over" ? "TAP TO RETRY" : "TAP TO START", 120, 110, "#78dcff"); } }
   let last = performance.now(), acc = 0;
   function loop(now) { acc += Math.min(200, now - last); last = now; while (acc >= 1000 / 60) { acc -= 1000 / 60; update(); } draw(); requestAnimationFrame(loop); }
