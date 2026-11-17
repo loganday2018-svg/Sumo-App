@@ -196,7 +196,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   function update() { tick++; W.hitT++; shakeT++; if (W.stun > 0) W.stun--; pops.forEach(p => p.t++); while (pops.length && pops[0].t > 45) pops.shift();
     if (mode !== "play") return; GAMES[cur].update(S); if (--S.time <= 0) { mode = "over"; tick = 0; sfx.win(); } }
   function draw() { g.drawImage(bg, 0, 0); const gm = GAMES[cur]; gm.draw(S);
-    if (mode === "play") { if (!gm.noTimer) txt(Math.ceil(S.time / 60) + "s", 234, 18, S.time < 300 ? "#ff8a7a" : "#fff", "right"); pops.forEach(p => txt(p.s, p.x, p.y - p.t * .3, p.c)); }
+    if (mode === "play") { if (!gm.noTimer) txt(Math.ceil(S.time / 60) + "s", 234, 18, S.time < 300 ? "#ff8a7a" : "#fff", "right"); g.font = FONT; pops.forEach(p => { const half = g.measureText(p.s).width / 2 + 2; txt(p.s, Math.max(half, Math.min(240 - half, p.x)), p.y - p.t * .3, p.c); }); }
     else { g.fillStyle = "rgba(14,10,28,.7)"; g.fillRect(0, 0, 240, 160); txt(gm.name.slice(2).toUpperCase(), 120, 44, "#ffd45a");
       if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 2 || cur === 3 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt(gm.noTimer ? "POSSESSED!" : "TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
       if ((tick >> 5) % 2 === 0) txt(mode === "over" ? "TAP TO RETRY" : "TAP TO START", 120, 110, "#78dcff"); } }
