@@ -149,19 +149,20 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
         const half = Math.max(.07, .13 - s.broken * .015), x = 60, w = 120; g.fillStyle = "#0a0a14"; g.fillRect(x, 140, w, 10); g.fillStyle = "#2f7a3a"; g.fillRect(x + w * (.5 - half), 140, w * half * 2, 10); g.fillStyle = "#9dffb8"; g.fillRect(x + w * (.5 - half * .35), 140, w * half * .7, 10); g.fillStyle = "#fff"; g.fillRect(Math.round(x + w * s.pos) - 1, 137, 3, 16);
         txt("POLES " + s.broken, 6, 6, "#fff", "left"); txt("CRACKS", 6, 18, "#ffd45a", "left"); bar(6, 28, 50, 5, s.cracks / s.need, "#ffaa28"); } },
 
-    { name: "4 Charge + Thrust", buttons: ["", "HOLD", ""],
-      how: "Hold to wind up, let go inside the gold band for a heavy thrust. Dead centre of the band is a PERFECT: double damage and double XP. Every thrust you land in a row shrinks the band but raises the multiplier. Hold too long and you whiff. Later poles are tougher, and from pole 3 the band drifts.",
+    { name: "4 Charge + Thrust", buttons: ["", "HOLD", ""], noTimer: true,
+      how: "Hold to wind up, let go inside the gold band for a heavy thrust. Dead centre of the band is a PERFECT: double damage and double XP. Every thrust you land in a row shrinks the band but raises the multiplier. Hold too long and you whiff. Later poles are tougher, and from pole 3 the band drifts. You get 12 thrusts per set.",
       POLES: [{ name: "PINE", hp: 10, c: "#8a5a32" }, { name: "OAK", hp: 14, c: "#7a4a26" }, { name: "IRON-BOUND", hp: 18, c: "#6a4222", iron: true }, { name: "TEMPLE", hp: 24, c: "#5a361c", iron: true }],
-      init(s) { s.power = 0; s.held = false; s.pole = 0; s.hp = this.POLES[0].hp; s.max = s.hp; s.streak = 0; s.best = 0; s.broken = 0; s.xp = 0; s.time = 40 * 60; s.drift = 0; s.splinters = []; s.fall = null; W.pull = 0; },
+      init(s) { s.power = 0; s.held = false; s.pole = 0; s.hp = this.POLES[0].hp; s.max = s.hp; s.streak = 0; s.best = 0; s.broken = 0; s.xp = 0; s.time = 1e9; s.thrusts = 12; s.endT = -1; s.drift = 0; s.splinters = []; s.fall = null; W.pull = 0; },
       spec(s) { return this.POLES[Math.min(s.pole, this.POLES.length - 1)]; },
       band(s) { const w = Math.max(.06, .26 - s.streak * .025), mid = .78 + (s.pole >= 2 ? Math.sin(s.drift) * .1 : 0); return [mid - w / 2, mid + w / 2]; },
       update(s) { if (s.pole >= 2) s.drift += .03 + .01 * (s.pole - 2);
         if (s.held) { s.power += 1 / 72; W.pull = Math.min(1, s.power);
-          if (s.power >= 1.06) { s.held = false; s.power = 0; W.pull = 0; s.streak = 0; W.stun = 34; sfx.bad(); pop("WHIFF! OFF BALANCE", "#ff8a7a"); } }
+          if (s.power >= 1.06) { s.held = false; s.power = 0; W.pull = 0; s.streak = 0; W.stun = 34; s.thrusts--; sfx.bad(); pop("WHIFF! OFF BALANCE", "#ff8a7a"); if (s.thrusts <= 0) s.endT = 0; } }
         s.splinters = s.splinters.filter(b => { b.x += b.vx; b.y += b.vy; b.vy += .15; return --b.life > 0; });
-        if (s.fall) { s.fall.t++; if (s.fall.t > 46) s.fall = null; } },
-      press(s, i) { if (i === 1 && W.stun <= 0 && !s.fall) { s.held = true; s.power = 0; } },
-      release(s, i) { if (i !== 1 || !s.held) return; s.held = false; const p = s.power, [lo, hi] = this.band(s), mid = (lo + hi) / 2, half = (hi - lo) / 2; s.power = 0; W.pull = 0;
+        if (s.fall) { s.fall.t++; if (s.fall.t > 46) s.fall = null; }
+        if (s.endT >= 0 && ++s.endT > 50) s.time = 0; },
+      press(s, i) { if (i === 1 && W.stun <= 0 && !s.fall && s.thrusts > 0) { s.held = true; s.power = 0; } },
+      release(s, i) { if (i !== 1 || !s.held) return; s.held = false; const p = s.power, [lo, hi] = this.band(s), mid = (lo + hi) / 2, half = (hi - lo) / 2; s.power = 0; W.pull = 0; s.thrusts--;
         const sp = this.spec(s), splinter = (n, f) => { for (let k = 0; k < n; k++) s.splinters.push({ x: POLE_X + 2, y: 86 + Math.random() * 10, vx: -Math.random() * 2.5 * f, vy: -1 - Math.random() * 2 * f, life: 28, c: k % 2 ? "#d9b07a" : sp.c }); };
         if (p >= lo && p <= hi) { const perfect = Math.abs(p - mid) <= half * .35; s.streak++; s.best = Math.max(s.best, s.streak);
           const mult = 1 + Math.floor(s.streak / 3) * .5, dmg = Math.round((perfect ? 4 : 2) * mult * (sp.iron && !perfect ? .5 : 1)), gain = Math.round((s.pole + 1) * (perfect ? 2 : 1) * mult);
@@ -169,7 +170,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
           pop((perfect ? "PERFECT! " : "HEAVY ") + "+" + gain + " XP", perfect ? "#9dffb8" : "#ffd45a"); if (mult > 1) pop("x" + mult + " STREAK", "#78dcff", 120, 56); }
         else if (p > hi) { s.streak = 0; W.big = false; strike(86); W.stun = 24; sfx.bad(); pop("OVERSHOT", "#ff8a7a"); }
         else { s.streak = 0; W.big = false; strike(86); if (p > .35) { s.hp -= sp.iron ? 0 : 1; sfx.hit(p * .6); pop(sp.iron ? "CLANG. TOO LIGHT" : "LIGHT TAP", "#ffd45a"); } else { sfx.miss(); pop("TOO SOFT", "#ff8a7a"); } }
-        if (s.hp <= 0) { const gain = (s.pole + 1) * 10; s.xp += gain; s.broken++; s.fall = { t: 0, c: sp.c }; splinter(20, 1.8); s.pole++; s.hp = s.max = this.spec(s).hp; s.time += 6 * 60; sfx.win(); pop("POLE BROKEN! +" + gain + " XP", "#9dffb8", 120, 112); } },
+        if (s.hp <= 0) { const gain = (s.pole + 1) * 10; s.xp += gain; s.broken++; s.fall = { t: 0, c: sp.c }; splinter(20, 1.8); s.pole++; s.hp = s.max = this.spec(s).hp; sfx.win(); pop("POLE BROKEN! +" + gain + " XP", "#9dffb8", 120, 112); }
+        if (s.thrusts <= 0) s.endT = 0; },
       draw(s) { const sp = this.spec(s), [lo, hi] = this.band(s), mid = (lo + hi) / 2, half = (hi - lo) / 2;
         if (s.fall) { const t = s.fall.t, a = Math.min(1.4, t * t * .002); g.save(); g.translate(POLE_X + 6, 74); g.rotate(a); g.globalAlpha = Math.max(0, 1 - t / 46); g.fillStyle = s.fall.c; g.fillRect(-6, -35, 12, 35); g.restore(); g.globalAlpha = 1; }
         if (!s.fall || s.fall.t > 20) { g.globalAlpha = s.fall ? (s.fall.t - 20) / 26 : 1; drawPole(sh(), Math.round((1 - s.hp / s.max) * 14)); if (sp.iron) { g.fillStyle = "#4a5260"; for (const y of [50, 108]) g.fillRect(POLE_X - 1, y, 14, 3); g.fillStyle = "#8a96a8"; for (const y of [50, 108]) g.fillRect(POLE_X - 1, y, 14, 1); } g.globalAlpha = 1; }
@@ -180,6 +182,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
         const p = Math.min(1, s.power); g.fillStyle = s.power > hi ? "#e6463c" : s.power >= lo ? "#ffffff" : "#6fbf4a"; g.fillRect(x + 4, y + h * (1 - p), 6, h * p);
         g.strokeStyle = "#e8e2fa"; g.lineWidth = 1; g.strokeRect(x - .5, y - .5, 15, h + 1); txt("PWR", x + 7, y + h + 4, "#a49cc0");
         txt("XP " + s.xp, 36, 6, "#78dcff", "left"); txt("STREAK " + s.streak, 36, 18, "#fff", "left");
+        for (let k = 0; k < 12; k++) { g.fillStyle = k < s.thrusts ? "#ffd45a" : "#3a3048"; g.fillRect(226 - (k % 12) * 7, 6 + (k / 12 | 0) * 7, 5, 5); }
         txt(sp.name, 196, 134, "#ffd45a"); bar(162, 146, 68, 5, s.hp / s.max, "#e0402a"); } },
 
     { name: "5 Oni Pole", buttons: ["LEFT", "", "RIGHT"], how: "Alternate LEFT and RIGHT to drive the oni back. When its eyes flash white it is about to shove: stop striking until it passes, or you get thrown back.",
@@ -218,7 +221,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   function draw() { g.drawImage(bg, 0, 0); const gm = GAMES[cur]; gm.draw(S);
     if (mode === "play") { if (!gm.noTimer) txt(Math.ceil(S.time / 60) + "s", 234, 18, S.time < 300 ? "#ff8a7a" : "#fff", "right"); g.font = FONT; pops.forEach(p => { const half = g.measureText(p.s).width / 2 + 2; txt(p.s, Math.max(half, Math.min(240 - half, p.x)), p.y - p.t * .3, p.c); }); }
     else { g.fillStyle = "rgba(14,10,28,.7)"; g.fillRect(0, 0, 240, 160); txt(gm.name.slice(2).toUpperCase(), 120, 44, "#ffd45a");
-      if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 3 ? "XP " + S.xp + "  POLES " + S.broken : cur === 2 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt(gm.noTimer ? "POSSESSED!" : "TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
+      if (mode === "over") { const r = cur === 0 ? "XP " + S.xp + "  WAVE " + S.wave : cur === 3 ? "XP " + S.xp + "  POLES " + S.broken : cur === 2 ? "POLES BROKEN " + S.broken : cur === 4 ? "ONI BEATEN " + S.wins : "SCORE " + S.score; txt(cur === 0 ? "POSSESSED!" : cur === 3 ? "OUT OF THRUSTS" : "TIME!", 120, 66, "#ff8a7a"); txt(r, 120, 82, "#fff"); }
       if ((tick >> 5) % 2 === 0) txt(mode === "over" ? "TAP TO RETRY" : "TAP TO START", 120, 110, "#78dcff"); } }
   let last = performance.now(), acc = 0;
   function loop(now) { acc += Math.min(200, now - last); last = now; while (acc >= 1000 / 60) { acc -= 1000 / 60; update(); } draw(); requestAnimationFrame(loop); }
