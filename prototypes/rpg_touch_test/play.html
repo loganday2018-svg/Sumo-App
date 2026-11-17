@@ -17,12 +17,24 @@
   .acts .z, .acts .x { border-radius: 50%; font-size: 18px; }
   .acts .z { grid-area: 2 / 2; } .acts .x { grid-area: 2 / 1; }
   .acts .m { grid-area: 1 / 1 / 2 / 3; border-radius: 999px; font-size: 12px; }
+  .styles { position: fixed; z-index: 6; top: calc(6px + env(safe-area-inset-top, 0px)); right: calc(8px + env(safe-area-inset-right, 0px)); display: flex; gap: 4px; align-items: center; font: 600 11px system-ui, sans-serif; color: #a49cc0; }
+  .styles button { font: 600 11px system-ui, sans-serif; color: var(--fg); background: var(--pad); border: 1px solid var(--edge); border-radius: 999px; padding: 5px 9px; }
+  .styles button[aria-pressed="true"] { background: var(--on); color: #1c1830; border-color: var(--on); }
+  @media (pointer: coarse) and (orientation: portrait) { .styles { top: calc(30px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; flex-wrap: wrap; justify-content: center; } }
   .hint { position: fixed; top: calc(8px + env(safe-area-inset-top, 0px)); left: 0; right: 0; text-align: center; font: 12px system-ui, sans-serif; color: #a49cc0; display: none; pointer-events: none; }
   @media (pointer: coarse) and (orientation: portrait) { .hint { display: block; } }
 </style>
 <link rel="modulepreload" crossorigin href="assets/phaser-CTbIuaw5.js">
 <div id="game"></div>
 <p class="hint">Turn your phone sideways for a bigger screen.</p>
+<div class="styles" role="group" aria-label="Walk style">
+  <span>Walk</span>
+  <button type="button" data-style="none">Art only</button>
+  <button type="button" data-style="sway">Sway</button>
+  <button type="button" data-style="squash">Squash</button>
+  <button type="button" data-style="soft">Soft dip</button>
+  <button type="button" data-style="full">Full bob</button>
+</div>
 <div class="touch dpad" aria-label="Direction pad">
   <button class="u" data-key="ArrowUp" aria-label="Up">&#9650;</button>
   <button class="l" data-key="ArrowLeft" aria-label="Left">&#9664;</button>
@@ -59,8 +71,19 @@
       ["pointerup", "pointercancel", "lostpointercapture"].forEach(t => btn.addEventListener(t, lift));
       btn.addEventListener("contextmenu", e => e.preventDefault());
     });
+    // walk style picker: tells the game live and remembers the pick
+    const styleBtns = document.querySelectorAll(".styles button");
+    let current = "sway";
+    try { current = localStorage.getItem("sumo-rpg:walkStyle") || "sway"; } catch (e) {}
+    const mark = () => styleBtns.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.style === current)));
+    styleBtns.forEach(b => b.addEventListener("click", () => {
+      current = b.dataset.style; mark();
+      window.dispatchEvent(new CustomEvent("sumo-rpg:walk-style", { detail: current }));
+      b.blur();
+    }));
+    mark();
     // a double-tap anywhere should never zoom the page
     document.addEventListener("dblclick", e => e.preventDefault(), { passive: false });
   })();
 </script>
-<script type="module" crossorigin src="assets/index-CkwyQ6h8.js"></script>
+<script type="module" crossorigin src="assets/index-DLo6qgWk.js"></script>
